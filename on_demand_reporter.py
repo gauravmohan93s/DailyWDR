@@ -72,13 +72,16 @@ def generate_report(start_date: str, end_date: str, output_path: Path, member_df
         data_ws = writer.sheets['KRA_Daily_Breakdown']
         data_ws.freeze_panes(2, 0)
 
+        # Define formats
         header_format = workbook.add_format({'bold': True, 'font_size': 20, 'align': 'center', 'valign': 'vcenter'})
+        bold_format = workbook.add_format({'bold': True})
+
         # ... other formats ...
         dashboard_ws.merge_range('B2:G3', 'Performance Report', header_format)
         info = member_df.iloc[0].fillna('')
-        dashboard_ws.write('B5', 'Employee:', {'bold': True})
+        dashboard_ws.write('B5', 'Employee:', bold_format)
         dashboard_ws.write('C5', f"{info['EmployeeName']} ({info['EmployeeEmail']})")
-        dashboard_ws.write('B6', 'Date Range:', {'bold': True})
+        dashboard_ws.write('B6', 'Date Range:', bold_format)
         dashboard_ws.write('C6', f"{start_date} to {end_date}")
 
         # ... Write KPIs and Charts as before ...
