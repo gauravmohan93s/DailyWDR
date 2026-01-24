@@ -1,0 +1,94 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# IDE & Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+.project
+.pydevproject
+.settings/
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Logs
+*.log
+logs/
+*.err
+staff_error.log
+staff_output.log
+
+# Database & Data Files
+*.db
+*.db-journal
+kc_reports.db
+kc_reports.db-journal
+*.xlsx
+*.xls
+summary_all_days.xlsx
+merged_actions.xlsx
+sent_log.csv
+sent_log_detail.csv
+
+# Generated Reports & Previews
+*_previews/
+daily_email_previews/
+manager_digest_previews/
+executive_digest_previews/
+*.html
+daily_announcement_*.md
+
+# OS-specific
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+Desktop.ini
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.backup
+*~
+
+# Secrets & Credentials (CRITICAL)
+.env
+.env.local
+.env.*.local
+secrets.json
+credentials.json
+config.private.py
+
+# Project-specific temp
+test_run_*
+debug_*
