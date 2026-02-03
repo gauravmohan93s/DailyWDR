@@ -266,57 +266,105 @@ def _get_db_date_range(local_eng) -> tuple[dt.date | None, dt.date | None]:
 
 # ------------------------ Database Operations ------------------------
 def initialize_database():
-    """(One-Time) Create database and backfill from existing CSVs."""
-    local_eng = get_local_db_engine()
-    inspector = inspect(local_eng)
-
-    if inspector.has_table(CONFIG["ACTIONS_TABLE"]):
-        print("[DB] 'actions' table already exists. Skipping initialization.")
+    """(One-Time) Create database and backfill from existing CSVs in batches."""
+    db_path = Path(CONFIG["SQLITE_DB_PATH"])
+    if db_path.exists() and db_path.stat().st_size > 0:
+        print(f"[DB] Database file found at {db_path}. Skipping initialization.")
         return
 
-    print("[DB] Initializing new SQLite database and backfilling from CSVs...")
     local_eng = get_local_db_engine()
+    # Explicitly drop the table to ensure a clean start if this function is ever re-run manually
+    with local_eng.begin() as conn:
+        conn.execute(text(f"DROP TABLE IF EXISTS {CONFIG['ACTIONS_TABLE']}"))
+        print("[DB] Dropped existing table for a clean backfill.")
+
+    print("[DB] Initializing new SQLite database and backfilling from CSVs...")
     
-    # Find and process all raw CSVs
     raw_dir = Path(CONFIG["RAW_DIR"])
     files = sorted(list(raw_dir.glob("raw_*.csv")))
     if not files:
-        print("[DB] No raw CSVs found to backfill. Database will be empty.")
-        # Create an empty table with the correct schema
-        pd.DataFrame(columns=['unique_id']).to_sql(CONFIG['ACTIONS_TABLE'], local_eng, if_exists='replace', index=False, dtype={'unique_id': 'TEXT PRIMARY KEY'})
+        print("[DB] No raw CSVs found to backfill.")
         return
 
-    print(f"[DB] Found {len(files)} daily CSVs to backfill...")
+    print(f"[DB] Found {len(files)} daily CSVs to backfill in batches...")
     mapping_df = load_action_group_mapping()
     
-    all_dfs = []
-    for i, p in enumerate(files, 1):
-        print(f"  - Processing {p.name} ({i}/{len(files)})")
-        df = pd.read_csv(p, dtype=str)
-        df_processed = apply_mapping_and_normalize(df, mapping_df)
-        all_dfs.append(df_processed)
+    def chunker(seq, size):
+        return (seq[pos:pos + size] for pos in range(0, len(seq), size))
 
-    if not all_dfs:
-        print("[DB] No data in CSVs. Database will be empty.")
-        return
+    batch_size = 20
+    is_first_batch = True
+    total_written = 0
+
+    for i, file_chunk in enumerate(chunker(files, batch_size)):
+        batch_num = i + 1
+        print(f"[DB] Processing batch {batch_num} of {len(files) // batch_size + 1}...")
         
-    full_df = pd.concat(all_dfs, ignore_index=True).drop_duplicates(subset=["unique_id"])
-    
-    print(f"[DB] Writing {len(full_df)} total unique records to database...")
-    # Set unique_id as index to create it as a primary key
-    full_df = full_df.set_index('unique_id')
-    
-    full_df.to_sql(
-        CONFIG["ACTIONS_TABLE"],
-        local_eng,
-        if_exists="replace",
-        index=True,
-        index_label='unique_id',
-        dtype={'unique_id': String(64)},
-        chunksize=10000,
-        method='multi'
-    )
-    print("[DB] Database initialization complete.")
+        batch_dfs = []
+        for p in file_chunk:
+            try:
+                df = pd.read_csv(p, dtype=str)
+                if not df.empty:
+                    batch_dfs.append(apply_mapping_and_normalize(df, mapping_df))
+            except Exception as e:
+                print(f"  -> [WARN] Could not process {p.name}: {e}")
+
+        if not batch_dfs:
+            print("  -> No data in this batch.")
+            continue
+            
+        batch_df = pd.concat(batch_dfs, ignore_index=True).drop_duplicates(subset=["unique_id"])
+        
+        if batch_df.empty:
+            print("  -> No unique records in this batch.")
+            continue
+
+        num_columns = len(batch_df.columns)
+        safe_chunksize = 999 // num_columns if num_columns > 0 else 500
+
+        if is_first_batch:
+            print(f"  -> Writing {len(batch_df)} records (first batch)...")
+            batch_df.set_index('unique_id').to_sql(
+                CONFIG["ACTIONS_TABLE"],
+                local_eng,
+                if_exists="replace", # Creates table with unique_id as PK
+                index=True,
+                index_label='unique_id',
+                dtype={'unique_id': String(64)},
+                chunksize=safe_chunksize,
+                method='multi'
+            )
+            is_first_batch = False
+        else:
+            print(f"  -> Appending {len(batch_df)} potential new records...")
+            # Use a temporary table for safe, de-duplicating appends
+            temp_table_name = f"temp_append_{batch_num}"
+            batch_df.to_sql(
+                temp_table_name,
+                local_eng,
+                if_exists="replace",
+                index=False,
+                chunksize=safe_chunksize,
+                method='multi'
+            )
+            
+            # Insert from temp table, ignoring conflicts on the primary key
+            with local_eng.begin() as conn:
+                col_list = ", ".join([f'"{c}"' for c in batch_df.columns if c != 'unique_id'])
+                all_cols = '"unique_id", ' + col_list
+                
+                # SQLite's INSERT ... ON CONFLICT is the best tool here.
+                # However, since the first batch creates the PK, we can use INSERT OR IGNORE
+                conn.execute(text(f"""
+                    INSERT OR IGNORE INTO {CONFIG['ACTIONS_TABLE']} (unique_id, {col_list})
+                    SELECT unique_id, {col_list} FROM {temp_table_name}
+                """))
+                conn.execute(text(f"DROP TABLE {temp_table_name}"))
+
+        total_written += len(batch_df)
+        print(f"  -> Batch {batch_num} complete. Total potential records processed: {total_written}")
+
+    print(f"[DB] Database initialization complete. Processed approximately {total_written} records.")
 
 def fetch_from_source_db(start_utc: dt.datetime, end_utc: dt.datetime, team_emails: List[str] | None = None) -> pd.DataFrame:
     """
@@ -359,8 +407,13 @@ def fetch_from_source_db(start_utc: dt.datetime, end_utc: dt.datetime, team_emai
         return pd.DataFrame()
 
 def fetch_and_upsert_recent_data():
-    """Fetch recent data and UPSERT into local SQLite DB."""
-    print("[DB] Updating local SQLite...")
+    """
+    Smart Update:
+    1. Checks the last date present in the local DB.
+    2. Identifies the gap between (Last DB Date) and (Yesterday).
+    3. Fetches source data for every missing day in that range.
+    """
+    print("[DB] Starting Smart Update...")
     local_eng = get_local_db_engine()
 
     # Ensure table exists
@@ -368,89 +421,104 @@ def fetch_and_upsert_recent_data():
         print("[DB] Actions table not found. Please run initialization first.")
         return
 
-    min_db, max_db = _get_db_date_range(local_eng)
+    # 1. Detect Gap
+    _min_db, max_db = _get_db_date_range(local_eng)
     today_ist = dt.datetime.now(IST).date()
     yesterday_ist = today_ist - dt.timedelta(days=1)
-    
-    # Try to fetch yesterday's data from source DB first
-    mapping_df = load_action_group_mapping()
-    total = 0
-    
-    if CONFIG.get("USE_REMOTE_DB", False):
-        # Fetch from source MSSQL for yesterday (IST) → UTC range
-        yesterday_start_ist = dt.datetime.combine(yesterday_ist, dt.time.min).replace(tzinfo=IST)
-        yesterday_end_ist = dt.datetime.combine(yesterday_ist, dt.time.max).replace(tzinfo=IST)
+
+    start_date = None
+    if max_db is None:
+        # DB is empty, default to a safe backfill window (e.g., last 30 days)
+        print("[DB] Database appears empty. Defaulting to last 30 days.")
+        start_date = yesterday_ist - dt.timedelta(days=30)
+    else:
+        # We have data up to max_db. Start fetching from the NEXT day.
+        start_date = max_db + dt.timedelta(days=1)
+
+    # 2. Safety Checks
+    if start_date > yesterday_ist:
+        print(f"[DB] Database is up to date (Last data: {max_db}). No new data to fetch from source.")
+    else:
+        # Check safety limit
+        days_to_fetch = (yesterday_ist - start_date).days + 1
+        limit = CONFIG.get("MAX_DAYS_PER_RUN", 40)
         
-        yesterday_start_utc = yesterday_start_ist.astimezone(UTC)
-        yesterday_end_utc = yesterday_end_ist.astimezone(UTC)
+        print(f"[DB] Gap detected: {start_date} to {yesterday_ist} ({days_to_fetch} days).")
         
-        print(f"[DB] Fetching from source DB for {yesterday_ist.isoformat()}...")
-        df_source = fetch_from_source_db(yesterday_start_utc, yesterday_end_utc)
+        if days_to_fetch > limit:
+            print(f"[WARN] Gap ({days_to_fetch} days) exceeds limit ({limit}). Capping fetch to recent {limit} days.")
+            start_date = yesterday_ist - dt.timedelta(days=limit - 1)
+
+        # 3. Iterate and Fetch
+        mapping_df = load_action_group_mapping()
+        current = start_date
         
-        if not df_source.empty:
-            # Normalize the fetched data
-            df_processed = apply_mapping_and_normalize(df_source, mapping_df)
-            if not df_processed.empty:
-                _upsert_dataframe(local_eng, df_processed)
-                total += len(df_processed)
-                print(f"[DB] Upserted {len(df_processed)} records from source DB for {yesterday_ist}")
+        if CONFIG.get("USE_REMOTE_DB", False):
+            while current <= yesterday_ist:
+                # Define 24h window (IST -> UTC)
+                day_start_ist = dt.datetime.combine(current, dt.time.min).replace(tzinfo=IST)
+                day_end_ist = dt.datetime.combine(current, dt.time.max).replace(tzinfo=IST)
+                
+                day_start_utc = day_start_ist.astimezone(UTC)
+                day_end_utc = day_end_ist.astimezone(UTC)
+
+                print(f"[DB] Fetching source data for {current}...")
+                try:
+                    df_source = fetch_from_source_db(day_start_utc, day_end_utc)
+                    if not df_source.empty:
+                        df_processed = apply_mapping_and_normalize(df_source, mapping_df)
+                        if not df_processed.empty:
+                            _upsert_dataframe(local_eng, df_processed)
+                            print(f"  -> Upserted {len(df_processed)} records.")
+                        else:
+                            print("  -> No valid records after normalization.")
+                    else:
+                        print("  -> No data found in source.")
+                except Exception as e:
+                    print(f"  -> [ERROR] Failed to fetch {current}: {e}")
+
+                current += dt.timedelta(days=1)
         else:
-            print(f"[DB] No data found in source DB for {yesterday_ist}")
-    
-    # Also import from CSVs if available (as fallback/backfill)
-    print("[DB] Importing from CSVs...")
+            print("[DB] USE_REMOTE_DB is False. Skipping source fetch.")
+
+    # 4. Fallback: CSV Import (Legacy/Manual overrides)
+    # We still check for any NEW CSVs that might have been dropped manually
+    print("[DB] Checking for manual CSV imports...")
     raw_dir = Path(CONFIG["RAW_DIR"])
     files = _iter_raw_csv_files(raw_dir)
-    if not files:
-        print("[DB] No raw CSVs found for update.")
-        if total == 0:
-            return
-    else:
-        # Determine DB date range (IST) and CSV range
-        earliest_csv = files[0][0] if files else None
-        latest_csv = files[-1][0] if files else None
-
-        # Select CSVs to import:
-        # 1) If DB empty -> import all CSVs (one-time full backfill)
-        # 2) Always import recent files from last date - 1 day (daily updates)
-        # 3) If DB is missing early dates, backfill those CSVs too (accuracy fix)
-        selected = []
-        if not min_db or not max_db:
-            selected = files
-        else:
-            recent_from = max_db - dt.timedelta(days=1)
-            selected = [(d, p) for (d, p) in files if d >= recent_from]
-            if earliest_csv and min_db and earliest_csv < min_db:
-                missing_early = [(d, p) for (d, p) in files if d < min_db]
-                if missing_early:
-                    print(f"[DB] Backfilling {len(missing_early)} earlier CSVs for accuracy ({earliest_csv} to {min_db - dt.timedelta(days=1)})")
-                    selected = missing_early + selected
-
-        # Safety cap for DAILY updates only (skip cap if we are doing a backfill)
-        max_days = int(CONFIG.get("MAX_DAYS_PER_RUN", 0) or 0)
-        if max_days > 0 and len(selected) > max_days and (not min_db or (earliest_csv and min_db and earliest_csv >= min_db)):
-            selected = selected[-max_days:]
-
+    
+    # Only import CSVs that are NEWER than what we just potentially fetched, 
+    # or if we want to ensure we catch anything missed. 
+    # Simplest strategy: Import CSVs for the same gap period or generic 'recent' logic.
+    # Here we stick to the existing logic: import CSVs if they match the gap or are recent.
+    
+    mapping_df = load_action_group_mapping() # Reload ensures fresh state
+    total_csv = 0
+    
+    if files:
+        # Filter CSVs to only those >= start_date (the gap we identified)
+        # If DB was up to date, start_date > yesterday, so we might skip this.
+        # Let's be permissive: Import any CSV from (max_db - 1 day) onwards to be safe.
+        scan_from = (max_db - dt.timedelta(days=1)) if max_db else (yesterday_ist - dt.timedelta(days=30))
+        
+        selected = [(d, p) for (d, p) in files if d >= scan_from]
         if selected:
+            print(f"[DB] Found {len(selected)} CSVs to potentially sync (from {scan_from}).")
             for d, p in selected:
-                print(f"[DB] Importing CSV: {p.name}")
+                # Optional: Optimization - check if we already have data for this day?
+                # For now, we UPSERT, so re-reading is safe and ensures local manual overrides work.
                 try:
                     df_raw = pd.read_csv(p, dtype=str)
-                except Exception as exc:
-                    print(f"[WARN] Failed to read {p.name}: {exc}")
-                    continue
-                if df_raw.empty:
-                    continue
-                df_processed = apply_mapping_and_normalize(df_raw, mapping_df)
-                if df_processed.empty:
-                    continue
-                _upsert_dataframe(local_eng, df_processed)
-                total += len(df_processed)
-
-    if total > 0:
-        print(f"[DB] Upserted {total} total records into the local database.")
-    else:
-        print("[DB] No new records upserted.")
+                    if not df_raw.empty:
+                        df_proc = apply_mapping_and_normalize(df_raw, mapping_df)
+                        if not df_proc.empty:
+                            _upsert_dataframe(local_eng, df_proc)
+                            total_csv += len(df_proc)
+                except Exception:
+                    pass
+    
+    if total_csv > 0:
+        print(f"[DB] Also merged {total_csv} records from local CSVs.")
 
 # --- Helper for chunking and IN clauses ---
 def _chunks(seq, n):
@@ -463,9 +531,23 @@ def _in_clause(prefix: str, items: List[str]) -> Tuple[str, Dict[str,str]]:
         key = f"{prefix}{i}"; params[key] = it; placeholders.append(f":{key}")
     return ",".join(placeholders), params
 
+def get_database_dates():
+    local_eng = get_local_db_engine()
+    min_date, max_date = _get_db_date_range(local_eng)
+    if min_date and max_date:
+        print(f"Data in database ranges from {min_date.isoformat()} to {max_date.isoformat()}")
+    elif min_date:
+        print(f"Data in database starts from {min_date.isoformat()}")
+    elif max_date:
+        print(f"Data in database ends at {max_date.isoformat()}")
+    else:
+        print("No data found in the database.")
+
+
 # ------------------------ MAIN ------------------------
 if __name__ == "__main__":
     # The new flow: initialize once, then update daily.
     # To re-run initialization, delete the kc_reports.db file.
     initialize_database()
     fetch_and_upsert_recent_data()
+    get_database_dates()

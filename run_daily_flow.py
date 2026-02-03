@@ -21,7 +21,7 @@ import daily_wd_data_extractor as extractor
 import wd_summariser
 import exec_email
 import mg_tl_email
-import staff_eamil
+import staff_email
 
 STEPS = [
     ("Initialize/Backfill Database (if needed)", extractor.initialize_database),
@@ -29,7 +29,7 @@ STEPS = [
     ("WD Summariser", wd_summariser.main),
     ("Executive Digest", exec_email.main),
     ("Manager Digest", mg_tl_email.main),
-    ("Staff Mailers", staff_eamil.main),
+    ("Staff Mailers", staff_email.main),
 ]
 
 
