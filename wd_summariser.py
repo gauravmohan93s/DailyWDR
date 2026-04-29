@@ -77,6 +77,12 @@ def read_settings(settings_path: Path):
     for c in ["EmployeeEmail","EmployeeName","Role","Region","SubRegion","Manager","Include","SendTo","SaturdayOffPattern"]:
         if c not in team.columns: team[c] = ""
     team["EmployeeEmail"] = team["EmployeeEmail"].astype(str).str.strip().str.lower()
+    # DEDUPLICATE TEAM ROSTER: Ensure each email only appears once (prevents repetitive rows in reports)
+    before_count = len(team)
+    team = team.drop_duplicates(subset=["EmployeeEmail"], keep="first")
+    if len(team) < before_count:
+        print(f"[SETTINGS] Deduplicated team roster: {before_count} -> {len(team)} members")
+    
     team["Include"] = team["Include"].astype(str).str.strip().str.lower().map({"yes":True,"y":True,"1":True}).fillna(False)
     team["SaturdayOffPattern"] = team["SaturdayOffPattern"].astype(str).str.strip()
 

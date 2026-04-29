@@ -108,6 +108,9 @@ def load_settings(settings_path: Path):
     for c in ["EmployeeEmail","EmployeeName","Role","Region","SubRegion","Manager","Include","SendTo"]:
         if c not in team.columns: team[c] = ""
     team["EmployeeEmail"] = team["EmployeeEmail"].astype(str).str.strip().str.lower()
+    # DEDUPLICATE TEAM ROSTER: Ensure each email only appears once (prevents repetitive rows in reports)
+    team = team.drop_duplicates(subset=["EmployeeEmail"], keep="first")
+    
     for c in ["Region","SubRegion","Role","Manager","EmployeeName","SendTo"]:
         team[c] = team[c].astype(str).str.strip()
 
@@ -161,6 +164,9 @@ def load_summary(path: Path, sheet: str) -> pd.DataFrame:
     for c in ["EmployeeName","Role","Region","SubRegion","Manager"]:
         if c in df.columns:
             df[c] = df[c].fillna("").astype(str).str.strip()
+            
+    # DEDUPLICATE: Ensure each employee has only one record per day to prevent inflated totals
+    df = df.drop_duplicates(subset=["ReportDate", "EmployeeEmail"], keep="first")
     return df
 
 # ============== WORKING DAY HELPERS & MONTH TARGETS ============== #
