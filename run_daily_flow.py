@@ -22,8 +22,17 @@ import wd_summariser
 import exec_email
 import mg_tl_email
 import staff_email
+import settings_validator
+
+# Paths from wd_summariser (could be moved to reporting_config for DRY)
+SETTINGS_PATH = Path(r"C:\Users\gsakhare\OneDrive - KC OVERSEAS EDUCATION PVT LTD\UK - Analytics\UK Team Reports\Reports\DailyReport\CF_Action\setting\wd_settings.xlsx")
+
+def run_settings_validation():
+    if not settings_validator.validate_settings(SETTINGS_PATH):
+        raise ValueError("Settings validation failed. Please fix entries in wd_settings.xlsx.")
 
 STEPS = [
+    ("Validate Settings", run_settings_validation),
     ("Initialize/Backfill Database (if needed)", extractor.initialize_database),
     ("Fetch & Upsert Recent Data", extractor.fetch_and_upsert_recent_data),
     ("WD Summariser", wd_summariser.main),

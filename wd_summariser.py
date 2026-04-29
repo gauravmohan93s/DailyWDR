@@ -6,13 +6,6 @@ WD Summariser — All Days + Daily Announcement (single-sheet system, gamified)
 - Adds ranks, Top3, streaks, badges, uniqueness signals (already in the daily rows)
 - Generates a DAILY Markdown announcement (console + .md file; optional webhook post)
 - OPEN for new measures: reads dynamically from wd_settings.xlsx
-
-CHANGES (Oct-2025)
-- MTD strictly from DAY-WISE totals (no raw recounting)
-- Optional weekly/monthly aggregation helpers strictly from daily too
-- Badges show MeasureLabel (not code)
-- Per-measure BadgeEligible flag
-- “Yesterday” = last working day (skip Sundays & Holidays)
 """
 
 from __future__ import annotations
@@ -24,9 +17,12 @@ import numpy as np
 import pandas as pd
 
 from reporting_config import REPORT_DATE_OVERRIDE, LOCAL_DB_PATH
+from data_loader import (
+    load_settings, load_summary,
+    norm_token, split_norm_list, parse_saturday_pattern
+)
 
 # ---------------------- Paths – EDIT THESE ---------------------- #
-# Read/write directly from the shared OneDrive CF_Action tree so downstream mailers consume the same artifacts.
 MERGED_PATH   = Path(r"C:\Users\gsakhare\OneDrive - KC OVERSEAS EDUCATION PVT LTD\UK - Analytics\UK Team Reports\Reports\DailyReport\CF_Action\raw\merged\merged_actions.xlsx")
 SETTINGS_PATH = Path(r"C:\Users\gsakhare\OneDrive - KC OVERSEAS EDUCATION PVT LTD\UK - Analytics\UK Team Reports\Reports\DailyReport\CF_Action\setting\wd_settings.xlsx")
 OUT_ALL_PATH  = Path(r"C:\Users\gsakhare\OneDrive - KC OVERSEAS EDUCATION PVT LTD\UK - Analytics\UK Team Reports\Reports\DailyReport\CF_Action\raw\summary_all_days.xlsx")
@@ -43,141 +39,38 @@ UNIQUENESS_HIGH_THRESH = 0.60     # 60% unique/total is "high"
 BADGE_MEASURE_TOP_N = 5           # Top-N per measure/day for badges
 STREAK_MILESTONES = [3, 5, 10, 20]
 
-# ---------------------- Token normalisation helpers ---------------------- #
-_token_re = re.compile(r"[^a-z0-9]+")
-
-def _empty_if_placeholder(raw: str) -> str:
-    raw = (raw or "").strip().lower()
-    return "" if raw in {"nan", "none", "nil"} else raw
-
-def norm_token(s: str) -> str:
-    s = _empty_if_placeholder(str(s))
-    s = s.replace("_", " ")
-    s = _token_re.sub(" ", s)
-    s = re.sub(r"\s+", " ", s).strip()
-    return s
-
-def split_norm_list(s: str) -> list[str]:
-    s = _empty_if_placeholder(str(s))
-    return [norm_token(x) for x in s.split(";") if norm_token(x)]
-
-def parse_saturday_pattern(raw: str) -> set[int]:
-    """Parse strings like '1st & 3rd' / '2 & 4' into a set of Saturday ordinals."""
-    tokens = re.findall(r"[1-4]", str(raw or ""))
-    return {int(t) for t in tokens if t in {"1", "2", "3", "4"}}
-
-# ---------------------- Settings IO & Validation ---------------------- #
-def read_settings(settings_path: Path):
-    xls = pd.read_excel(settings_path, sheet_name=None)
-
-    # Team
-    team = xls.get("Team")
-    if team is None:
-        raise ValueError("Missing 'Team' sheet.")
-    for c in ["EmployeeEmail","EmployeeName","Role","Region","SubRegion","Manager","Include","SendTo","SaturdayOffPattern"]:
-        if c not in team.columns: team[c] = ""
-    team["EmployeeEmail"] = team["EmployeeEmail"].astype(str).str.strip().str.lower()
-    # DEDUPLICATE TEAM ROSTER: Ensure each email only appears once (prevents repetitive rows in reports)
-    before_count = len(team)
-    team = team.drop_duplicates(subset=["EmployeeEmail"], keep="first")
-    if len(team) < before_count:
-        print(f"[SETTINGS] Deduplicated team roster: {before_count} -> {len(team)} members")
-    
-    team["Include"] = team["Include"].astype(str).str.strip().str.lower().map({"yes":True,"y":True,"1":True}).fillna(False)
-    team["SaturdayOffPattern"] = team["SaturdayOffPattern"].astype(str).str.strip()
-
-    # Measures
-    measures = xls.get("Measures")
-    if measures is None:
-        raise ValueError("Missing 'Measures' sheet.")
-    need_m = ["MeasureCode","MeasureLabel","AggType","AggField","ActionTypeIn","AG_In","AG_NotIn","ExcludeAcksFrom","IncludeInKRA","BadgeEligible"]
-    for c in need_m:
-        if c not in measures.columns: measures[c] = ""
-    for c in need_m:
-        measures[c] = measures[c].fillna("").astype(str)
-    measures["MeasureCode"]   = measures["MeasureCode"].str.strip()
-    measures["MeasureLabel"]  = measures["MeasureLabel"].str.strip()
-    measures["AggType"]       = measures["AggType"].str.strip().str.upper()
-    measures["AggField"]      = measures["AggField"].str.strip()
-    measures["ExcludeAcksFrom"] = measures["ExcludeAcksFrom"].str.strip()
-    measures["IncludeInKRA"]  = measures["IncludeInKRA"].str.strip().str.upper().map({"Y":True,"YES":True}).fillna(False)
-    measures["ActionTypeIn_normlist"] = measures["ActionTypeIn"].apply(split_norm_list)
-    measures["AG_In_normlist"]        = measures["AG_In"].apply(split_norm_list)
-    measures["AG_NotIn_normlist"]     = measures["AG_NotIn"].apply(split_norm_list)
-    measures["AggField_norm"]         = measures["AggField"].apply(norm_token)
-    # NEW: BadgeEligible boolean (default True)
-    measures["BadgeEligible"] = (
-        measures["BadgeEligible"].astype(str).str.strip().str.upper()
-        .map({"Y":True,"YES":True,"1":True,"N":False,"NO":False,"0":False})
-        .fillna(True)
-    )
-
-    # RoleMeasures
-    role_meas = xls.get("RoleMeasures")
-    if role_meas is None:
-        raise ValueError("Missing 'RoleMeasures' sheet.")
-    need_r = ["Role","MeasureCode","Weight","DailyTarget","MinFloor","Cap"]
-    for c in need_r:
-        if c not in role_meas.columns: role_meas[c] = 0 if c not in ("Role","MeasureCode") else ""
-    role_meas["Role"] = role_meas["Role"].astype(str).str.strip()
-    role_meas["MeasureCode"] = role_meas["MeasureCode"].astype(str).str.strip()
-    for c in ["Weight","DailyTarget","MinFloor","Cap"]:
-        role_meas[c] = pd.to_numeric(role_meas[c], errors="coerce").fillna(0.0)
-
-    # AggAliases
-    aliases = xls.get("AggAliases")
-    if aliases is None or not {"Name","Column"}.issubset(aliases.columns):
-        raise ValueError("Missing/invalid 'AggAliases' sheet (Name, Column).")
-    alias_map = {str(r["Name"]).strip(): str(r["Column"]).strip() for _, r in aliases.iterrows()}
-
-    # Holidays (optional)
-    holidays = xls.get("Holidays", pd.DataFrame())
-    hol_dates = set()
-    if not holidays.empty:
-        for col in ["Date","HolidayDate","Holiday","Dt"]:
-            if col in holidays.columns:
-                parsed = pd.to_datetime(holidays[col], errors="coerce").dt.date
-                hol_dates = set(d for d in parsed.dropna().tolist())
-                break
-
-    # RoleTargets (optional): Role, KRATargetScore
-    role_targets = xls.get("RoleTargets", pd.DataFrame(columns=["Role","KRATargetScore"])).copy()
-    if "Role" not in role_targets.columns: role_targets["Role"] = ""
-    if "KRATargetScore" not in role_targets.columns: role_targets["KRATargetScore"] = np.nan
-    role_targets["Role"] = role_targets["Role"].astype(str).str.strip()
-    role_targets["KRATargetScore"] = pd.to_numeric(role_targets["KRATargetScore"], errors="coerce")
-
-    # Label & badge eligibility maps for downstream display/logic
-    label_map = {str(r.MeasureCode): (str(r.MeasureLabel).strip() or str(r.MeasureCode)) for _, r in measures.iterrows()}
-    badge_ok  = {str(r.MeasureCode): bool(r.BadgeEligible) for _, r in measures.iterrows()}
-
-    return team, measures, role_meas, alias_map, hol_dates, role_targets, label_map, badge_ok
-
+# ---------------------- Validation ---------------------- #
 def validate_settings(measures: pd.DataFrame, role_meas: pd.DataFrame) -> dict:
     report = {"status":"OK","issues":[]}
     valid_types = {"ROW_COUNT","DISTINCT_COUNT"}
     bad_types = measures[~measures["AggType"].astype(str).str.upper().isin(valid_types)]
     if not bad_types.empty:
         report["issues"].append("Invalid AggType for: " + ", ".join(bad_types["MeasureCode"].astype(str)))
+    
     check = measures[measures["AggType"].astype(str).str.upper()=="DISTINCT_COUNT"]
+    # AggField_norm is provided by data_loader
     valid_fields = {"ack","student","partner","university"}
     bad_fields = check[~check["AggField_norm"].astype(str).isin(valid_fields)]
     if not bad_fields.empty:
         report["issues"].append("Invalid AggField (DISTINCT_COUNT) for: " + ", ".join(bad_fields["MeasureCode"].astype(str)))
+    
     known = set(measures["MeasureCode"].astype(str))
     unknown_refs = role_meas[~role_meas["MeasureCode"].astype(str).isin(known)]
     if not unknown_refs.empty:
         report["issues"].append("RoleMeasures refer to unknown MeasureCode(s): " + ", ".join(sorted(unknown_refs["MeasureCode"].astype(str).unique())))
+    
     dup = role_meas.groupby(["Role","MeasureCode"]).size().reset_index(name="count")
     dup = dup[dup["count"]>1]
     if not dup.empty:
         txt = ", ".join([f"{r.Role}/{r.MeasureCode}" for _, r in dup.iterrows()])
         report["issues"].append(f"Duplicate Role+Measure pairs: {txt}")
+    
     sums = role_meas.groupby("Role")["Weight"].sum().reset_index()
     not_one = sums[(sums["Weight"] < 0.98) | (sums["Weight"] > 1.02)]
     if not not_one.empty:
         txt = "; ".join([f"{r.Role}={r.Weight:.3f}" for _, r in not_one.iterrows()])
         report["issues"].append(f"Weight sums not ~1.0 for roles: {txt} (normalized in scoring)")
+    
     if report["issues"]:
         report["status"] = "WARN"
     return report
@@ -196,25 +89,16 @@ def load_merged() -> pd.DataFrame:
     """Loads all actions from the local SQLite database."""
     print("[DB] Loading data from kc_reports.db...")
     engine = get_local_db_engine()
-    
-    # The ActionDate is already stored as text in 'YYYY-MM-DD HH:MM:SS' format (UTC)
     df = pd.read_sql(f"SELECT * FROM actions", engine, parse_dates=["ActionDate"])
-    
     print(f"[DB] Loaded {len(df)} records.")
 
-    # Re-establish timezone awareness (data is stored as UTC text)
     df["ActionDate"] = df["ActionDate"].dt.tz_localize('UTC')
-
-    # Create IST date column for grouping, handling NaT values
     df["ActionDateIST_Date"] = df["ActionDate"].dt.tz_convert("Asia/Kolkata").dt.date
-    # Convert any NaT to NaN, then we'll filter them out later
     df["ActionDateIST_Date"] = df["ActionDateIST_Date"].where(pd.notna(df["ActionDate"]), pd.NaT)
     
-    # Normalize needed fields
     df["action_type"]  = df.get("ActionType","").astype(str).map(norm_token)
     df["action_group"] = df.get("Action Group","").astype(str).map(norm_token)
     
-    # Ensure partner key for uniqueness calculations
     if "PartnerCode" not in df.columns:
         df["PartnerCode"] = ""
     df["PartnerKey"] = np.where(
@@ -228,7 +112,6 @@ def load_merged() -> pd.DataFrame:
 def build_working_calendar(min_date: dt.date, max_date: dt.date, holidays: set[dt.date]) -> pd.DataFrame:
     rng = pd.date_range(min_date, max_date, freq="D").date
     cal = pd.DataFrame({"ReportDate": rng})
-    # Sunday=6, exclude Sundays
     ts = pd.to_datetime(cal["ReportDate"])
     cal["IsSunday"]  = ts.dt.dayofweek == 6
     cal["IsSaturday"] = ts.dt.dayofweek == 5
@@ -237,7 +120,6 @@ def build_working_calendar(min_date: dt.date, max_date: dt.date, holidays: set[d
     cal["IsWorkingDay"] = ~(cal["IsSunday"] | cal["IsHoliday"])
     cal["Year"] = pd.to_datetime(cal["ReportDate"]).dt.year
     cal["Month"] = pd.to_datetime(cal["ReportDate"]).dt.month
-    # rolling in-month
     cal["WorkingDaysInMonth"] = cal.groupby(["Year","Month"])["IsWorkingDay"].transform("sum").astype(int)
     cal["WorkingDaysElapsed"] = cal.groupby(["Year","Month"])["IsWorkingDay"].cumsum().astype(int)
     return cal[["ReportDate","WorkingDaysInMonth","WorkingDaysElapsed","IsWorkingDay","IsSaturday","SaturdayOrdinal"]]
@@ -328,7 +210,7 @@ def compute_measures_all_days(df: pd.DataFrame, measures: pd.DataFrame, alias_ma
             ack_sets[code] = ack_series
 
     values_wide = pd.concat(values_frames, axis=1) if values_frames else pd.DataFrame(index=mi_all)
-    values_wide = values_wide.reset_index()  # ReportDate, EmployeeEmail, measures...
+    values_wide = values_wide.reset_index()
     day_totals = values_wide.groupby("ReportDate").sum(numeric_only=True)
     return values_wide, day_totals, ack_sets
 
@@ -386,10 +268,6 @@ def add_mtd_and_targets_workdays(daily: pd.DataFrame,
                                  role_meas: pd.DataFrame,
                                  measure_codes: list[str],
                                  work_cal: pd.DataFrame | None) -> pd.DataFrame:
-    """
-    IMPORTANT: MTD is computed ONLY as cumsum of the per-day, per-person columns already in `daily`.
-    No raw-data recounts happen here.
-    """
     out = daily.copy()
     needs_calendar = not {"WorkingDaysInMonth","WorkingDaysElapsed","IsWorkingDay"}.issubset(out.columns)
     if work_cal is not None and needs_calendar:
@@ -400,7 +278,6 @@ def add_mtd_and_targets_workdays(daily: pd.DataFrame,
         out = out.merge(work_cal[merge_cols + cols_keep], on=merge_cols, how="left")
     out = out.sort_values(["EmployeeEmail","ReportDate"]).reset_index(drop=True)
 
-    # month keys
     out["Year"]  = pd.to_datetime(out["ReportDate"]).dt.year
     out["Month"] = pd.to_datetime(out["ReportDate"]).dt.month
     grp = out.groupby(["EmployeeEmail","Year","Month"], group_keys=False)
@@ -409,44 +286,17 @@ def add_mtd_and_targets_workdays(daily: pd.DataFrame,
     if ("WorkingDaysInMonth" not in out.columns) or out["WorkingDaysInMonth"].isna().any():
         out["WorkingDaysInMonth"] = grp["IsWorkingDay"].transform("sum").astype(int)
 
-    # map DailyTarget by (Role, MeasureCode)
     tgt_map = {(str(r.Role), str(r.MeasureCode)): float(r.DailyTarget) for _, r in role_meas.iterrows()}
 
     for code in measure_codes:
         if code not in out.columns:
             out[code] = 0
-        # strict: cumulative SUM of day-wise values
         out[f"MTD_{code}"] = grp[code].cumsum().astype(float)
-
-        # rolling expected MTD based on working days elapsed
         dtarget = out.apply(lambda r: tgt_map.get((str(r["Role"]), str(code)), 0.0), axis=1)
         out[f"Expected_MTD_{code}"] = (dtarget * out["WorkingDaysElapsed"]).astype(float)
 
     return out.drop(columns=["Year","Month"])
 
-# OPTIONAL — weekly/monthly aggregations strictly from daily
-def aggregate_from_daily(daily: pd.DataFrame,
-                         measure_codes: list[str],
-                         freq: str = "W-MON") -> pd.DataFrame:
-    """
-    Aggregate strictly from day-wise totals.
-    freq examples: "W-MON" (week ending Monday), "M" (calendar month).
-    """
-    df = daily.copy()
-    ts = pd.to_datetime(df["ReportDate"])
-    # end time (Period → timestamp) then cast to date for clarity
-    df["Period"] = ts.dt.to_period(freq).dt.end_time.dt.date
-
-    by = ["EmployeeEmail","EmployeeName","Role","Region","SubRegion","Manager","Include","Period"]
-    sum_cols = measure_codes + [f"MTD_{m}" for m in measure_codes if f"MTD_{m}" in df.columns]
-    have_cols = [c for c in sum_cols if c in df.columns]
-    keep = by + have_cols
-    df = df[keep].copy()
-
-    agg = df.groupby(by, dropna=False)[have_cols].sum(min_count=1).reset_index()
-    return agg
-
-# ---------------------- Uniqueness signal ---------------------- #
 def build_measure_families(measures: pd.DataFrame) -> list[dict]:
     def key_of(row):
         parts = []
@@ -483,8 +333,15 @@ def add_uniqueness_ratios(daily: pd.DataFrame, measures: pd.DataFrame, thr: floa
 # ---------------------- Build ALL days (single sheet) ---------------------- #
 def build_all_days(settings_path: Path, out_path: Path,
                    ignore_cap: bool = True, uniq_thr: float = 0.60):
-    (team, measures, role_meas, alias_map,
-     holidays, role_targets, label_map, badge_ok) = read_settings(settings_path)
+    cfg = load_settings(settings_path)
+    team = cfg["team"]
+    measures = cfg["measures"]
+    role_meas = cfg["role_meas"]
+    alias_map = cfg["alias_map"]
+    holidays = cfg["holidays"]
+    role_targets = cfg["role_targets"]
+    label_map = cfg["label_map"]
+    badge_ok = cfg["badge_ok_map"]
 
     val = validate_settings(measures, role_meas)
     print(f"[Validator] Status: {val['status']}")
@@ -493,27 +350,22 @@ def build_all_days(settings_path: Path, out_path: Path,
 
     df = load_merged()
 
-    # KPI & Measures across ALL activity days
     kpi_all = compute_kpis_all_days(df)
     vals_wide, day_totals, ack_sets = compute_measures_all_days(df, measures, alias_map)
     vals_wide = apply_ack_exclusions_all_days(vals_wide, ack_sets, measures)
 
-    # ----- Build ALL CALENDAR DATES from min..max (not only activity days) -----
-    # Drop NaT/NaN values when calculating date range
     valid_dates = df["ActionDateIST_Date"].dropna()
     if valid_dates.empty:
         raise ValueError("No valid action dates found in data")
     min_d, max_d = valid_dates.min(), valid_dates.max()
     full_dates = pd.DataFrame({"ReportDate": pd.date_range(min_d, max_d, freq="D").date})
 
-    # Working-days calendar
     work_cal = build_working_calendar(min_d, max_d, holidays)
     sat_off_map = {
         str(r.EmployeeEmail).strip().lower(): parse_saturday_pattern(r.get("SaturdayOffPattern", ""))
         for _, r in team.iterrows()
     }
 
-    # Roster × full_dates
     roster = team[["EmployeeEmail","EmployeeName","Role","Region","SubRegion","Manager","Include","SaturdayOffPattern"]].copy()
     base_cal = work_cal.rename(columns={"IsWorkingDay":"BaseIsWorkingDay"})
     all_members = (
@@ -542,12 +394,10 @@ def build_all_days(settings_path: Path, out_path: Path,
     all_members.drop(columns=["Year","Month","BaseIsWorkingDay","IsSaturday","SaturdayOrdinal"], inplace=True)
     work_cal_member = all_members[["ReportDate","EmployeeEmail","WorkingDaysInMonth","WorkingDaysElapsed","IsWorkingDay"]].copy()
 
-    # Join KPI + Measures
     daily = (all_members
              .merge(kpi_all, on=["ReportDate","EmployeeEmail"], how="left")
              .merge(vals_wide, on=["ReportDate","EmployeeEmail"], how="left"))
 
-    # Fill meta + zeros
     for c in ["EmployeeName","Role","Region","SubRegion","Manager"]:
         daily[c] = daily[c].fillna("")
     measure_codes = list(measures["MeasureCode"])
@@ -558,7 +408,6 @@ def build_all_days(settings_path: Path, out_path: Path,
         else:
             daily[c] = 0
 
-    # KRA per day
     daily = daily.sort_values(["ReportDate","EmployeeEmail"]).reset_index(drop=True)
     kra_scores = []
     for _, df_day in daily.groupby("ReportDate", sort=False):
@@ -567,7 +416,6 @@ def build_all_days(settings_path: Path, out_path: Path,
         kra_scores.append(df_d["KRA_Score"])
     daily["KRA_Score"] = pd.concat(kra_scores).sort_index().values
 
-    # Ranks + Top3 (Top3 flag respects BadgeEligible)
     daily["KRA_Rank_Role"] = daily.groupby(["ReportDate","Role"])["KRA_Score"].rank(method="dense", ascending=False).astype(int)
     daily["KRA_Rank_Overall"] = daily.groupby("ReportDate")["KRA_Score"].rank(method="dense", ascending=False).astype(int)
     for code in measure_codes:
@@ -577,7 +425,6 @@ def build_all_days(settings_path: Path, out_path: Path,
                                        (daily[f"Rank_{code}"] <= BADGE_MEASURE_TOP_N) &
                                        badge_ok.get(code, True)).astype(int)
 
-    # Day totals % (within day)
     day_totals = day_totals.rename_axis("ReportDate").reset_index()
     daily = daily.merge(day_totals, on="ReportDate", suffixes=("", "__DAYTOT"), how="left")
     for code in measure_codes:
@@ -587,19 +434,13 @@ def build_all_days(settings_path: Path, out_path: Path,
             daily[pct_col] = np.where(total.notna(), (daily[code] / total * 100.0).round(1), 0.0)
             daily.drop(columns=[tot_col], inplace=True)
 
-    # Rolling MTD & Expected (STRICT from daily)
     daily = add_mtd_and_targets_workdays(daily, role_meas, measure_codes, work_cal_member)
-
-    # Uniqueness signal
     daily = add_uniqueness_ratios(daily, measures, thr=uniq_thr)
 
-    # Streak+badges: require role targets (default 100 if missing)
     rt_map = {str(r.Role): (float(r.KRATargetScore) if not pd.isna(r.KRATargetScore) else 100.0)
               for _, r in role_targets.iterrows()}
     daily["KRATargetScore"] = daily["Role"].map(lambda x: rt_map.get(str(x), 100.0))
     daily["Hit_Target_Today"] = (daily["KRA_Score"] >= daily["KRATargetScore"]).astype(int)
-
-    # Daily streak (carry over on non-working days)
     daily["_IsWD"] = daily.get("IsWorkingDay", False).fillna(False).astype(bool)
 
     daily = daily.sort_values(["EmployeeEmail","ReportDate"]).reset_index(drop=True)
@@ -608,26 +449,21 @@ def build_all_days(settings_path: Path, out_path: Path,
         cur = 0
         for _, r in df_emp.iterrows():
             if r["_IsWD"]:
-                if r["Hit_Target_Today"]:
-                    cur += 1
-                else:
-                    cur = 0
+                if r["Hit_Target_Today"]: cur += 1
+                else: cur = 0
             s.append(cur)
         return pd.Series(s, index=df_emp.index)
     daily["Daily_Streak"] = daily.groupby("EmployeeEmail", group_keys=False).apply(streak_series)
 
-    # ---- Badges (per-measure, controlled via BadgeEligible; use labels) ----
     badge_cols = []
     for code in measure_codes:
         rank_col = f"Rank_{code}"
         if rank_col in daily.columns and badge_ok.get(code, True):
             human = label_map.get(code, code)
             bcol = f"Badge_{code}"
-            # Only award badges when the measure has actual activity.
             daily[bcol] = np.where((daily[rank_col] == 1) & (daily[code] > 0), f"Top {human}", "")
             badge_cols.append(bcol)
 
-    # Top KRA badge (always)
     daily["Badge_KRA"] = np.where(daily["KRA_Rank_Overall"] == 1, "Top KRA", "")
     badge_cols.append("Badge_KRA")
 
@@ -638,7 +474,6 @@ def build_all_days(settings_path: Path, out_path: Path,
     daily["Badges_Today"] = daily.apply(collect_badges, axis=1)
     daily.drop(columns=[c for c in badge_cols if c in daily.columns], inplace=True)
 
-    # Final columns order (still only ONE sheet)
     id_cols = ["ReportDate","EmployeeEmail","EmployeeName","Role","Region","SubRegion","Manager","Include"]
     kpi_cols = ["KPI_TotalActions","KPI_UniqueApplications","KPI_UniqueStudents","KPI_UniquePartners","KPI_UniqueUniversities"]
     kra_cols = ["KRA_Score","KRA_Rank_Role","KRA_Rank_Overall","Hit_Target_Today","Daily_Streak"]
@@ -651,12 +486,20 @@ def build_all_days(settings_path: Path, out_path: Path,
     others = [c for c in daily.columns if c not in ordered]
     daily = daily.reindex(columns=ordered + others)
 
-    # Write single sheet
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with pd.ExcelWriter(out_path, engine="openpyxl", mode="w") as w:
         daily.to_excel(w, sheet_name="summary_daily_all", index=False)
 
-    # Return data + measure list + label map for announcement builder
+    # NEW: Write to Database for performance/reliability
+    try:
+        engine = get_local_db_engine()
+        daily_db = daily.copy()
+        daily_db["ReportDate"] = daily_db["ReportDate"].astype(str)
+        daily_db.to_sql("daily_summary", engine, if_exists="replace", index=False)
+        print(f"[DB] Successfully synced daily_summary table ({len(daily_db)} rows).")
+    except Exception as e:
+        print(f"[DB] Failed to write to daily_summary table: {e}")
+
     return daily, measure_codes, label_map
 
 # ---------------------- IST helpers ---------------------- #
@@ -669,16 +512,10 @@ def parse_report_date(s: str|dt.date) -> dt.date:
     if isinstance(s, dt.date): return s
     s = str(s).strip().lower()
     if s == "yesterday":
-        # For compatibility: caller now handles "last working day"
         return _today_ist() - dt.timedelta(days=1)
     return dt.date.fromisoformat(s)
 
 def last_working_day_upto(daily_all: pd.DataFrame, upto_date_ist: dt.date) -> dt.date | None:
-    """
-    Returns the most recent date < upto_date_ist where _IsWD == True in daily_all.
-    This gives us "yesterday" (the previous working day before today).
-    Assumes build_all_days() already merged _IsWD.
-    """
     sub = daily_all.loc[(daily_all["ReportDate"] < upto_date_ist) & (daily_all["_IsWD"] == True), "ReportDate"]
     return max(sub) if not sub.empty else None
 
@@ -729,56 +566,44 @@ def build_announcement_text(daily_all: pd.DataFrame, measures: list[str], report
     title = f"### KC Daily — {day:%d %b %Y} (Gamified Leaderboard)"
     lines = [title, ""]
 
-    # Overall Top 3 by KRA
     top_kra = _topn(df_day, "KRA_Score", 3)
     lines += ["**Overall — Top 3 by KRA**", _format_topn_list(top_kra, "KRA"), ""]
 
-    # Per-role Top 3 by KRA
     top_kra_role = _topn_role(df_day, "KRA_Score", 3)
     lines += ["**By Role — Top 3 by KRA**", _format_topn_per_role(top_kra_role, "KRA"), ""]
 
-    # Per-measure Top3 (auto) — show labels
     lines.append("**Measure Highlights (Top 3)**")
     any_meas = False
     for code in measures:
-        if code not in df_day.columns: 
-            continue
+        if code not in df_day.columns: continue
         top_m = _topn(df_day, code, 3)
         if top_m:
             any_meas = True
             human = label_map.get(code, code)
             lines += [f"- *{human}*", _format_topn_list(top_m, human)]
-    if not any_meas:
-        lines.append("- No measure activity today.")
+    if not any_meas: lines.append("- No measure activity today.")
     lines.append("")
 
-    # Badges today
     badges = df_day[df_day["Badges_Today"].astype(str).str.len() > 0][["EmployeeName","EmployeeEmail","Badges_Today"]]
     lines.append("**Badges Today**")
-    if badges.empty:
-        lines.append("- No badges.")
+    if badges.empty: lines.append("- No badges.")
     else:
         for _, r in badges.iterrows():
             nm = r["EmployeeName"] or r["EmployeeEmail"]
             lines.append(f"- **{nm}** — {r['Badges_Today']}")
     lines.append("")
 
-    # Streak milestones
     lines.append("**Streak Milestones**")
     ms = _streak_milestones(df_day)
-    if not ms:
-        lines.append("- No streak milestones today.")
+    if not ms: lines.append("- No streak milestones today.")
     else:
-        for nm, d in ms:
-            lines.append(f"- **{nm}** reached **{d}**-day streak 🎯")
+        for nm, d in ms: lines.append(f"- **{nm}** reached **{d}**-day streak 🎯")
     lines.append("")
 
-    # MTD pulse (rolling): show top MTD for up to 3 core measures (labels)
     lines.append("**MTD Pulse (rolling)**")
     core_candidates = [c for c in measures if c.lower().startswith(("submit","assess","stg","cmnt","ofu","pend"))]
     show_measures = core_candidates[:3] if core_candidates else measures[:3]
-    if not show_measures:
-        lines.append("- (No measures configured)")
+    if not show_measures: lines.append("- (No measures configured)")
     else:
         for m in show_measures:
             col = f"MTD_{m}"
@@ -792,51 +617,32 @@ def build_announcement_text(daily_all: pd.DataFrame, measures: list[str], report
                         nm = r["EmployeeName"] or r["EmployeeEmail"]
                         lines.append(f"  - {nm} — {int(r[col])}")
     lines.append("")
-
     return "\n".join(lines)
 
-# ---------------------- Slack/Teams POST (optional) ---------------------- #
 def post_announcement(text: str, webhook_url: str) -> tuple[bool, str]:
-    if not webhook_url:
-        return False, "No webhook configured."
-    try:
-        import requests  # optional dependency
-    except Exception:
-        return False, "The 'requests' package is not installed."
+    if not webhook_url: return False, "No webhook configured."
+    try: import requests
+    except Exception: return False, "The 'requests' package is not installed."
     headers = {"Content-Type": "application/json"}
-    payload = {"text": text}  # Slack-compatible; also works for simple Teams incoming webhook
+    payload = {"text": text}
     try:
         resp = requests.post(webhook_url, headers=headers, data=json.dumps(payload), timeout=10)
-        ok = 200 <= resp.status_code < 300
-        return ok, f"HTTP {resp.status_code}"
-    except Exception as e:
-        return False, f"POST failed: {e}"
-
+        return 200 <= resp.status_code < 300, f"HTTP {resp.status_code}"
+    except Exception as e: return False, f"POST failed: {e}"
 
 def determine_announcement_date(daily_all: pd.DataFrame) -> dt.date:
     available = [d for d in daily_all["ReportDate"].dropna().tolist()]
-    if not available:
-        raise ValueError("No ReportDate values found in summary_daily_all.")
-
+    if not available: raise ValueError("No ReportDate values found in summary_daily_all.")
     if REPORT_DATE_OVERRIDE:
         forced = parse_report_date(REPORT_DATE_OVERRIDE)
-        if forced not in set(available):
-            raise ValueError(
-                f"Forced report date {forced.isoformat()} not present in summary_daily_all.xlsx. "
-                "Run the extractor/summariser for that day first."
-            )
+        if forced not in set(available): raise ValueError(f"Forced date {forced} not in summary.")
         return forced
-
     announce_cfg = str(ANNOUNCE_DATE).strip().lower()
     if announce_cfg == "yesterday":
         rep_date = last_working_day_upto(daily_all, _today_ist())
-        if rep_date is None:
-            rep_date = max(available)
-        return rep_date
-
+        return rep_date if rep_date is not None else max(available)
     return parse_report_date(ANNOUNCE_DATE)
 
-# ---------------------- RUN ---------------------- #
 def main() -> dt.date:
     print("[RUN] Building all-days summary (single-sheet) ...")
     daily_df, measure_codes, label_map = build_all_days(
@@ -844,24 +650,16 @@ def main() -> dt.date:
         ignore_cap=IGNORE_CAP, uniq_thr=UNIQUENESS_HIGH_THRESH
     )
     print(f"[DONE] Rows written: {len(daily_df)} -> {OUT_ALL_PATH}")
-
     rep_date = determine_announcement_date(daily_df)
-
     txt = build_announcement_text(daily_df, measure_codes, rep_date, label_map)
-
-    # Print a short notice and save .md
     print(f"[ANNOUNCE] Markdown ready for {rep_date.isoformat()}")
     md_path = ANNOUNCE_DIR / f"daily_announcement_{rep_date.isoformat()}.md"
     md_path.write_text(txt, encoding="utf-8")
     print(f"[ANNOUNCE] Markdown saved -> {md_path}")
-
-    # Optional webhook POST
     if POST_ANNOUNCEMENT:
         ok, info = post_announcement(txt, ANNOUNCE_WEBHOOK_URL)
         print(f"[ANNOUNCE] Webhook post: {'OK' if ok else 'FAILED'} ({info})")
-
     return rep_date
-
 
 if __name__ == "__main__":
     main()
