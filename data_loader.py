@@ -165,7 +165,7 @@ def load_settings(path: Path) -> Dict[str, Any]:
         "kra_meas_union": sorted(list(set(role_meas.loc[role_meas["IncludeInKRA"], "MeasureCode"].dropna().astype(str)))),
     }
 
-def load_summary(path: Path, sheet: str = "summary_daily_all") -> pd.DataFrame:
+def load_summary(path: Path, sheet: str = "summary_daily_all", report_date: dt.date = None) -> pd.DataFrame:
     """
     Loads and deduplicated daily summary data.
     Prefers SQLite DB if available, falls back to Excel.
@@ -181,7 +181,10 @@ def load_summary(path: Path, sheet: str = "summary_daily_all") -> pd.DataFrame:
             cur = conn.cursor()
             cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='daily_summary'")
             if cur.fetchone():
-                df = pd.read_sql("SELECT * FROM daily_summary", conn)
+                if report_date:
+                    df = pd.read_sql("SELECT * FROM daily_summary WHERE ReportDate = ?", conn, params=[str(report_date)])
+                else:
+                    df = pd.read_sql("SELECT * FROM daily_summary", conn)
                 conn.close()
                 if not df.empty:
                     df["ReportDate"] = pd.to_datetime(df["ReportDate"]).dt.date
@@ -195,7 +198,7 @@ def load_summary(path: Path, sheet: str = "summary_daily_all") -> pd.DataFrame:
         except Exception as e:
             print(f"[DATA_LOADER] DB read failed, falling back to Excel: {e}")
 
-    # 2. FALLBACK TO EXCEL
+    # 2. FALLBACK TO EXCEL (No SQL filtering support for Excel fallback to keep logic simple)
     if not path.exists():
         return pd.DataFrame()
 
@@ -205,6 +208,9 @@ def load_summary(path: Path, sheet: str = "summary_daily_all") -> pd.DataFrame:
 
     # Basic cleanup
     df["ReportDate"] = pd.to_datetime(df["ReportDate"]).dt.date
+    if report_date:
+        df = df[df["ReportDate"] == report_date].copy()
+    
     df["EmployeeEmail"] = df["EmployeeEmail"].astype(str).str.strip().str.lower()
     
     # Fill missing string columns

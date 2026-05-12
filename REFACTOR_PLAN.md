@@ -4,38 +4,34 @@ This document outlines the specific technical steps needed to move the DailyWD-U
 
 ## 1. Centralized Data & Settings Loader (DRY)
 **Goal:** Consolidate data loading and settings logic into a single source of truth.
-*   **Current Issue:** `load_settings` and `load_summary` are duplicated across 4 scripts, leading to "logic drift."
-*   **Implementation:** 
-    *   Create `data_loader.py`.
-    *   Implement centralized, deduplicated `load_settings()` and `load_summary()`.
-    *   Update all scripts to import from `data_loader.py`.
+*   **Status:** ✅ DONE
+*   **Implementation:** Created `data_loader.py`. All scripts now import `load_settings` and `load_summary` from here.
 
 ## 2. Transition to Database-Backed Summaries
-**Goal:** Replace `summary_all_days.xlsx` with a dedicated SQLite table.
-*   **Current Issue:** Large Excel files are slow, prone to corruption, and caused "Total Work Done" inflation due to roster duplication.
-*   **Implementation:**
-    *   Create a `daily_summary` table in `kc_reports.db`.
-    *   Update `wd_summariser.py` to write results to both DB and Excel (for human viewing).
-    *   Update email scripts to read from the DB table for maximum performance and reliability.
+**Goal:** Replace `summary_all_days.xlsx` with a dedicated SQLite table for reliability.
+*   **Status:** ✅ DONE
+*   **Implementation:** Created `daily_summary` table in `kc_reports.db`. `wd_summariser.py` syncs to both DB and Excel.
 
 ## 3. Automated Settings & Data Validator
 **Goal:** Proactively catch manual entry errors before reports are sent.
-*   **Implementation:**
-    *   Create `settings_validator.py`.
-    *   Check for: Duplicate emails in roster, missing managers, invalid MeasureCodes.
-    *   Integrate into `run_daily_flow.py` as a "Pre-flight Check."
+*   **Status:** ✅ DONE
+*   **Implementation:** Created `settings_validator.py`. Integrated as "Pre-flight Check" in `run_daily_flow.py`.
 
-## 4. System Health & Alerting
-**Goal:** Monitoring background task execution.
-*   **Implementation:**
-    *   Implement centralized logging to `logs/system_health.log`.
-    *   Send a 1-line "Health Status" email to the admin after `run_daily_flow.py` completes.
+## 4. Fully Centralized Paths
+**Goal:** Move every hardcoded file path into `reporting_config.py`.
+*   **Implementation:** Consolidate `SETTINGS_PATH`, `SUMMARY_PATH`, `OUT_DIR`, etc., into one configuration file.
 
-## 5. Parallel Report Generation
-**Goal:** Scale the system for large teams.
-*   **Implementation:**
-    *   Use Python's `concurrent.futures` or `multiprocessing` to generate PDFs in parallel.
-    *   Significantly reduces execution time for `staff_email.py`.
+## 5. SQL-Level Filtering (Performance)
+**Goal:** Optimize `staff_email.py` by fetching only required rows from SQLite.
+*   **Implementation:** Replace `SELECT *` with `WHERE EmployeeEmail=? AND ActionDateIST_Date=?`.
+
+## 6. Decoupled Parallel Processing (Stability)
+**Goal:** Use parallel generation for files (fast) but sequential sending for Outlook (stable).
+*   **Implementation:** Refactor `staff_email.py` into two loops: one parallel (PDF/Excel) and one sequential (Email).
+
+## 7. Automated Disk Cleanup
+**Goal:** Prevent preview folders from growing indefinitely.
+*   **Implementation:** Add a step to `run_daily_flow.py` to delete preview files older than 14 days.
 
 ---
-**Updated on:** 29 Apr 2026 (Fix for Repetitive Team Members)
+**Updated on:** 12 May 2026 (Advanced Optimization Phase)

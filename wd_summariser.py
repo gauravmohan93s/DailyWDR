@@ -16,17 +16,18 @@ import json
 import numpy as np
 import pandas as pd
 
-from reporting_config import REPORT_DATE_OVERRIDE, LOCAL_DB_PATH
+from reporting_config import (
+    REPORT_DATE_OVERRIDE, LOCAL_DB_PATH,
+    SETTINGS_PATH, SUMMARY_PATH as OUT_ALL_PATH,
+    RAW_DIR as ANNOUNCE_DIR
+)
 from data_loader import (
     load_settings, load_summary,
     norm_token, split_norm_list, parse_saturday_pattern
 )
 
-# ---------------------- Paths – EDIT THESE ---------------------- #
-MERGED_PATH   = Path(r"C:\Users\gsakhare\OneDrive - KC OVERSEAS EDUCATION PVT LTD\UK - Analytics\UK Team Reports\Reports\DailyReport\CF_Action\raw\merged\merged_actions.xlsx")
-SETTINGS_PATH = Path(r"C:\Users\gsakhare\OneDrive - KC OVERSEAS EDUCATION PVT LTD\UK - Analytics\UK Team Reports\Reports\DailyReport\CF_Action\setting\wd_settings.xlsx")
-OUT_ALL_PATH  = Path(r"C:\Users\gsakhare\OneDrive - KC OVERSEAS EDUCATION PVT LTD\UK - Analytics\UK Team Reports\Reports\DailyReport\CF_Action\raw\summary_all_days.xlsx")
-ANNOUNCE_DIR  = OUT_ALL_PATH.parent  # write announcement alongside summary
+# ---------------------- Paths collected from config ---------------------- #
+# Note: ANNOUNCE_DIR is where we write the daily markdown announcement
 
 # ---------------------- Announcement config ---------------------- #
 ANNOUNCE_DATE = "yesterday"   # "yesterday" (IST) means "last working day"; or "YYYY-MM-DD"
@@ -86,11 +87,15 @@ def get_local_db_engine():
 
 # ---------------------- Data Load (from SQLite) ---------------------- #
 def load_merged() -> pd.DataFrame:
-    """Loads all actions from the local SQLite database."""
-    print("[DB] Loading data from kc_reports.db...")
+    """Loads actions from the local SQLite database with date filtering."""
+    from reporting_config import TRACKING_START_DATE
+    print(f"[DB] Loading data from kc_reports.db (starting from {TRACKING_START_DATE})...")
     engine = get_local_db_engine()
-    df = pd.read_sql(f"SELECT * FROM actions", engine, parse_dates=["ActionDate"])
-    print(f"[DB] Loaded {len(df)} records.")
+    
+    # SQL-FILTERED LOAD: Only fetch records since the tracking start date
+    query = f"SELECT * FROM actions WHERE ActionDate >= '{TRACKING_START_DATE}'"
+    df = pd.read_sql(query, engine, parse_dates=["ActionDate"])
+    print(f"[DB] Loaded {len(df)} relevant records.")
 
     df["ActionDate"] = df["ActionDate"].dt.tz_localize('UTC')
     df["ActionDateIST_Date"] = df["ActionDate"].dt.tz_convert("Asia/Kolkata").dt.date

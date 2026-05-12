@@ -7,6 +7,7 @@ Steps:
 2) Fetches recent records from the source DB and upserts them into the local DB.
 3) Rebuild the wd_summariser outputs from the local DB.
 4) Send Executive, Manager, and Staff digests.
+5) NEW: Automated disk cleanup of old preview files.
 """
 
 from __future__ import annotations
@@ -14,6 +15,8 @@ import traceback
 import sys
 import datetime as dt
 import csv
+import os
+import time
 from contextlib import redirect_stdout, redirect_stderr
 from pathlib import Path
 
@@ -24,12 +27,31 @@ import mg_tl_email
 import staff_email
 import settings_validator
 
-# Paths from wd_summariser (could be moved to reporting_config for DRY)
-SETTINGS_PATH = Path(r"C:\Users\gsakhare\OneDrive - KC OVERSEAS EDUCATION PVT LTD\UK - Analytics\UK Team Reports\Reports\DailyReport\CF_Action\setting\wd_settings.xlsx")
+from reporting_config import SETTINGS_PATH, EXEC_OUT_DIR, MGR_OUT_DIR, STAFF_OUT_DIR
 
 def run_settings_validation():
     if not settings_validator.validate_settings(SETTINGS_PATH):
         raise ValueError("Settings validation failed. Please fix entries in wd_settings.xlsx.")
+
+def run_disk_cleanup(days_to_keep: int = 14):
+    """Deletes preview files older than X days to save space."""
+    print(f"\n=== Disk Cleanup (older than {days_to_keep} days) ===")
+    folders = [EXEC_OUT_DIR, MGR_OUT_DIR, STAFF_OUT_DIR]
+    now = time.time()
+    deleted_count = 0
+    for folder in folders:
+        if not folder.exists(): continue
+        print(f"[CLEANUP] Scanning: {folder.name}")
+        for file in folder.iterdir():
+            if file.is_file():
+                age_days = (now - file.stat().st_mtime) / (24 * 3600)
+                if age_days > days_to_keep:
+                    try:
+                        file.unlink()
+                        deleted_count += 1
+                    except Exception as e:
+                        print(f"  [ERROR] Could not delete {file.name}: {e}")
+    print(f"[CLEANUP] Deleted {deleted_count} old preview files.")
 
 STEPS = [
     ("Validate Settings", run_settings_validation),
@@ -39,6 +61,7 @@ STEPS = [
     ("Executive Digest", exec_email.main),
     ("Manager Digest", mg_tl_email.main),
     ("Staff Mailers", staff_email.main),
+    ("Disk Cleanup", run_disk_cleanup),
 ]
 
 
@@ -72,7 +95,7 @@ def run_pipeline(stop_on_error: bool = True):
                     traceback.print_exc()
                     if stop_on_error:
                         raise
-            print(f"[DONE] Daily flow finished at {dt.datetime.now().isoformat()}")
+            print(f"\n[DONE] Daily flow finished at {dt.datetime.now().isoformat()}")
             _write_send_summary(log_dir)
 
 
@@ -91,7 +114,6 @@ def _write_send_summary(log_dir: Path):
             rows.append(row[:5])
     if not rows:
         return
-    # Use most recent report date in detail log
     try:
         max_date = max(r[1] for r in rows if r[1])
     except Exception:
