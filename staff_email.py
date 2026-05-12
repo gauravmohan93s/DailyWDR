@@ -27,15 +27,15 @@ from reporting_config import (
     KC_LOGO_PATH,
     SIG_IMAGE_PATH,
     STAFF_OUT_DIR as OUT_DIR,
-    WKHTMLTOPDF_PATH
+    WKHTMLTOPDF_PATH,
+    DRY_RUN_GLOBAL as DRY_RUN
 )
-from data_loader import load_settings, load_summary
+from data_loader import load_settings, load_summary, apply_config_filters
 
 # =========================== CONFIG =========================== #
 SUMMARY_SHEET = "summary_daily_all"
 
 # --- Email transport ---
-DRY_RUN          = True        # SET TO TRUE FOR DRY RUN
 ATTACH_PDF       = True
 ATTACH_CERT_PDF  = True
 SAVE_DRAFTS_WHEN_DRY_RUN = True
@@ -109,10 +109,7 @@ def load_member_actions_sql(email: str, day: dt.date) -> pd.DataFrame:
     """SQL-filtered fetch for specific employee on specific day."""
     from sqlalchemy import create_engine
     engine = create_engine(f"sqlite:///{LOCAL_DB_PATH}")
-    query = "SELECT * FROM actions WHERE EmployeeEmail = ? AND CAST(ActionDate AS DATE) = ?"
-    # Cast/Date matching depends on how ActionDate was stored; 
-    # but based on extractor, we use ActionDateIST_Date for report matching.
-    # We'll use a safer approach for SQLite strings:
+    # We use a safer approach for SQLite strings:
     df = pd.read_sql("SELECT * FROM actions WHERE EmployeeEmail = ?", engine, params=[email])
     if df.empty: return df
     
@@ -123,7 +120,7 @@ def load_member_actions_sql(email: str, day: dt.date) -> pd.DataFrame:
     sub = df[df["ActionDateIST_Date"] == day].copy()
     if sub.empty: return sub
 
-    df["ActionDateIST_Str"] = df["ActionDateIST"].dt.strftime("%Y-%m-%d %H:%M:%S")
+    sub["ActionDateIST_Str"] = sub["ActionDateIST"].dt.strftime("%Y-%m-%d %H:%M:%S")
     def _fill_action_taken(row):
         s1 = str(row.get("SubType1","") or "").strip()
         if s1: return s1
@@ -219,28 +216,28 @@ def send_outlook(to_addr: str, subject: str, html_path: Path, attachments: list[
         if DRY_RUN: mail.Save() if SAVE_DRAFTS_WHEN_DRY_RUN else mail.Display(False)
         else: mail.Send()
     finally: pythoncom.CoUninitialize()
+
 def main():
     OUT_DIR.mkdir(parents=True, exist_ok=True); cfg = load_settings(SETTINGS_PATH); team = cfg["team"]; labels_all = cfg["label_map"]; role_meas = cfg["role_meas"]; holidays = cfg["holidays"]
     global HOLIDAYS; HOLIDAYS = holidays
 
-    # Initial load (all rows) to get available dates
     df_all_dates = load_summary(SUMMARY_PATH, SUMMARY_SHEET)
-    if df_all_dates.empty:
-        print('No summary rows found.'); return
+    if df_all_dates.empty: print('No summary rows.'); return
 
     work_days = resolve_pending_work_days(df_all_dates['ReportDate'].dropna().tolist(), holidays, latest_working_day, 'staff_mailer', MAX_CATCHUP_DAYS)
     roster = team[["EmployeeEmail","EmployeeName","Role","Region","Include","SendTo"]].copy()
 
     for work_day in work_days:
         try:
-            # SQL-FILTERED LOAD: Only fetch summary rows for this specific day
             df_day = load_summary(SUMMARY_PATH, SUMMARY_SHEET, report_date=work_day)
-            if df_day.empty:
-                print(f'[WARN] No summary data found in DB for {work_day}.'); continue
+            if df_day.empty: print(f'[WARN] No summary data for {work_day}.'); continue
+
+            # APPLY UI FILTERS
+            df_day = apply_config_filters(df_day)
+            if df_day.empty: print(f'[INFO] No employees match filters for {work_day}. skipping.'); continue
 
             sr = load_sent_recipients('staff_mailer', work_day)
             merged = roster.merge(df_day, on='EmployeeEmail', how='inner', suffixes=('', '_sum'))
-
             merged = merged[pd.to_numeric(merged.get('KRA_Score',0), errors='coerce').fillna(0.0)>0].copy()
             if merged.empty: continue
             
@@ -250,9 +247,8 @@ def main():
                 codes = [str(x) for x in rms['MeasureCode'].dropna().tolist()]; rlabels = {c: labels_all.get(c, c) for c in codes}
                 role_labels[role] = rlabels; role_blocks[role] = build_role_leaderboard(merged, role, rlabels)
             
-            # Since these blocks are same for everyone today, we build them once
             from exec_email import build_badges_today_block, build_monthly_badges_block
-            bt_html = build_badges_today_block(merged, labels_all); bm_html = build_monthly_badges_block(summary, work_day, labels_all)
+            bt_html = build_badges_today_block(merged, labels_all); bm_html = build_monthly_badges_block(df_all_dates, work_day, labels_all)
 
             print(f"[STAFF] Phase A: Generating files for {len(merged)} members (Parallel)...")
             ready_files = {}
@@ -272,7 +268,6 @@ def main():
                 append_sent_detail('staff_mailer', work_day, email, 'dry_run' if DRY_RUN else 'ok')
             
             append_sent_log('staff_mailer', work_day, 'dry_run' if DRY_RUN else 'ok')
-            print(f"[STAFF] Finished {work_day}")
         except: traceback.print_exc()
 
 if __name__ == '__main__':

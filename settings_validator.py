@@ -56,11 +56,11 @@ def validate_settings(path: Path) -> bool:
             print(f"[ERROR] RoleMeasures refer to unknown codes: {', '.join(bad)}")
             return False
 
-        print("[VALIDATOR] Settings look good! ✅")
+        print("[VALIDATOR] Settings look good! [OK]")
         return True
 
     except Exception as e:
-        print(f"[ERROR] Validation failed with exception: {e}")
+        print(f"[ERROR] Validation failed with exception: {str(e).encode('ascii', 'ignore').decode('ascii')}")
         return False
 
 if __name__ == "__main__":

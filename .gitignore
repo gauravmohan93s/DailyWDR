@@ -2,54 +2,29 @@
 __pycache__/
 *.py[cod]
 *$py.class
-*.so
-.Python
+.env
+.venv
 env/
 venv/
-.env
+ENV/
+env.bak/
+venv.env/
 
-# Distribution / Packaging
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-
-# Logs and Databases
-*.log
-logs/
-*.sqlite
+# Data & Logs
 *.db
-kc_reports.db
-*.csv
+*.log
+sent_log.csv
+sent_log_detail.csv
+app_config.json
+
+# Excel/Previews
 *.xlsx
+*.xls
+*_previews/
 
-# Exceptions (if any config files are xlsx/csv, un-ignore them here)
-!wd_settings.xlsx
-
-# Project Outputs
-on_demand_reports/
-summary_all_days.xlsx
-*.pdf
-*.html
-Report_*.xlsx
-
-# IDEs
-.vscode/
-.idea/
-
-# OS Generated
+# Frontend
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/build/
 .DS_Store
-Thumbs.db
-
-*.db-journal

@@ -1,0 +1,4 @@
+ReportType,ReportDate,Status,Count
+exec_digest,2026-05-11,dry_run,6
+manager_digest,2026-05-11,dry_run,12
+staff_mailer,2026-05-11,dry_run,204

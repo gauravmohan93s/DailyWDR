@@ -9,9 +9,34 @@ import datetime as dt
 import csv
 from typing import Callable, Iterable, Set
 
-# =========================== OVERRIDES =========================== #
-# Set REPORT_DATE_OVERRIDE to a YYYY-MM-DD string to target a specific day.
-REPORT_DATE_OVERRIDE = "2026-05-11" 
+import json
+
+# =========================== DYNAMIC CONFIG =========================== #
+APP_CONFIG_PATH = Path("app_config.json")
+
+def load_app_config() -> dict:
+    defaults = {
+        "REPORT_DATE_OVERRIDE": "2026-05-11",
+        "DRY_RUN": True,
+        "DISK_CLEANUP_DAYS": 14
+    }
+    if not APP_CONFIG_PATH.exists():
+        with open(APP_CONFIG_PATH, "w") as f:
+            json.dump(defaults, f, indent=4)
+        return defaults
+    try:
+        with open(APP_CONFIG_PATH, "r") as f:
+            return {**defaults, **json.load(f)}
+    except:
+        return defaults
+
+def save_app_config(config: dict):
+    with open(APP_CONFIG_PATH, "w") as f:
+        json.dump(config, f, indent=4)
+
+_config = load_app_config()
+REPORT_DATE_OVERRIDE = _config.get("REPORT_DATE_OVERRIDE")
+DRY_RUN_GLOBAL       = _config.get("DRY_RUN", True)
 
 # =========================== PATHS =========================== #
 # Core Folders

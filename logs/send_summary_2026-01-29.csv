@@ -1,0 +1,4 @@
+ReportType,ReportDate,Status,Count
+exec_digest,2026-01-29,ok,3
+manager_digest,2026-01-29,ok,12
+staff_mailer,2026-01-29,ok,120

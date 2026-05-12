@@ -34,15 +34,15 @@ from reporting_config import (
     resolve_pending_work_days,
     SETTINGS_PATH, SUMMARY_PATH, 
     EXEC_OUT_DIR as OUT_DIR,
-    SIG_IMAGE_PATH, WKHTMLTOPDF_PATH
+    SIG_IMAGE_PATH, WKHTMLTOPDF_PATH,
+    DRY_RUN_GLOBAL as DRY_RUN
 )
-from data_loader import load_settings, load_summary
+from data_loader import load_settings, load_summary, apply_config_filters
 
 # =========================== CONFIG =========================== #
 SUMMARY_SHEET = "summary_daily_all"
 
 # Email transport
-DRY_RUN    = True # SET TO TRUE FOR DRY RUN
 SEND_VIA   = "outlook"  # 'outlook' or 'smtp'
 SMTP_SERVER = "smtp.office365.com"
 SMTP_PORT   = 587
@@ -887,6 +887,11 @@ def main():
         if df_day_all.empty:
             print(f'[WARN] No summary data found in DB for {work_day}.'); return True
             
+        # APPLY UI FILTERS (Name, Role, Team)
+        df_day_all = apply_config_filters(df_day_all)
+        if df_day_all.empty:
+            print(f'[INFO] No employees match the current filters for {work_day}. skipping.'); return True
+
         month_targets = build_month_targets(role_meas, holidays, work_day)
         sent_recipients = load_sent_recipients('exec_digest', work_day)
 
@@ -897,7 +902,7 @@ def main():
             if c in base.columns:
                 base.drop(columns=[c], inplace=True)
 
-        html = html_digest(work_day, base, team, role_kra_codes, labels_all, df, month_targets)
+        html = html_digest(work_day, base, team, role_kra_codes, labels_all, df_all_dates, month_targets)
 
         subject_label = work_day.isoformat()
         html_path = OUT_DIR / f"Executive_Digest_{work_day.isoformat()}_{subject_label}.html"

@@ -1,37 +1,33 @@
 # Technical Refactor Plan: DailyWD-UK V2.0
 
-This document outlines the specific technical steps needed to move the DailyWD-UK pipeline into a professional, server-ready state.
+This document outlines the steps to move the DailyWD-UK pipeline into a professional, server-ready state.
 
-## 1. Centralized Data & Settings Loader (DRY)
-**Goal:** Consolidate data loading and settings logic into a single source of truth.
-*   **Status:** ✅ DONE
-*   **Implementation:** Created `data_loader.py`. All scripts now import `load_settings` and `load_summary` from here.
+## 🟢 PHASE 1: Core Optimization (COMPLETED)
+1. **Centralized Data & Settings Loader:** Consolidated logic into `data_loader.py`.
+2. **Database-Backed Summaries:** Migrated Excel to SQLite `daily_summary`.
+3. **Automated Settings Validator:** Pre-flight check to catch human errors.
+4. **SQL-Level Filtering:** High-performance data fetching.
+5. **Fully Centralized Paths:** Single source of truth for all file paths.
+6. **Decoupled Parallelism:** Stability for Outlook sending.
+7. **Automated Disk Cleanup:** Storage maintenance.
 
-## 2. Transition to Database-Backed Summaries
-**Goal:** Replace `summary_all_days.xlsx` with a dedicated SQLite table for reliability.
-*   **Status:** ✅ DONE
-*   **Implementation:** Created `daily_summary` table in `kc_reports.db`. `wd_summariser.py` syncs to both DB and Excel.
+## 🔵 PHASE 2: Full-Stack Modernization (NEXT.JS + FASTAPI)
+**Goal:** Replace basic scripts with an enterprise-grade web application.
 
-## 3. Automated Settings & Data Validator
-**Goal:** Proactively catch manual entry errors before reports are sent.
-*   **Status:** ✅ DONE
-*   **Implementation:** Created `settings_validator.py`. Integrated as "Pre-flight Check" in `run_daily_flow.py`.
+### 1. Backend Service (FastAPI)
+* **Status:** IN PROGRESS
+* Implement `api_server.py` to expose reporting logic via REST.
+* Add WebSocket support for real-time log streaming.
+* Wrap existing `run_daily_flow.py` as a background task.
 
-## 4. Fully Centralized Paths
-**Goal:** Move every hardcoded file path into `reporting_config.py`.
-*   **Implementation:** Consolidate `SETTINGS_PATH`, `SUMMARY_PATH`, `OUT_DIR`, etc., into one configuration file.
+### 2. Frontend Dashboard (Next.js 14)
+* **Goal:** A beautiful, responsive UI for non-technical users.
+* Use Tailwind CSS and modern components for the "Command Center".
+* Create a dedicated "Team Manager" grid with real-time database syncing.
 
-## 5. SQL-Level Filtering (Performance)
-**Goal:** Optimize `staff_email.py` by fetching only required rows from SQLite.
-*   **Implementation:** Replace `SELECT *` with `WHERE EmployeeEmail=? AND ActionDateIST_Date=?`.
-
-## 6. Decoupled Parallel Processing (Stability)
-**Goal:** Use parallel generation for files (fast) but sequential sending for Outlook (stable).
-*   **Implementation:** Refactor `staff_email.py` into two loops: one parallel (PDF/Excel) and one sequential (Email).
-
-## 7. Automated Disk Cleanup
-**Goal:** Prevent preview folders from growing indefinitely.
-*   **Implementation:** Add a step to `run_daily_flow.py` to delete preview files older than 14 days.
+### 3. API Integration & Packaging
+* Connect the Next.js frontend to the FastAPI backend.
+* Create a single `start_system.bat` file to launch both servers.
 
 ---
-**Updated on:** 12 May 2026 (Advanced Optimization Phase)
+**Updated on:** 12 May 2026 (Full-Stack Modernization Phase)
