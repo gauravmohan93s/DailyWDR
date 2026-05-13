@@ -990,7 +990,7 @@ def main():
                 skipped += 1
                 continue
 
-            html = html_digest(mgr, work_day, df_mgr_day, team, role_kra_codes, labels_all, df_day_all, df, month_targets)
+            html = html_digest(mgr, work_day, df_mgr_day, team, role_kra_codes, labels_all, df_day_all, df_all_dates, month_targets)
 
             safe_mgr = re.sub(r'[^a-zA-Z0-9]+', '_', mgr)[:80]
             html_path = OUT_DIR / f"Manager_Digest_{work_day.isoformat()}_{safe_mgr}.html"

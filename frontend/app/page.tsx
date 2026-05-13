@@ -6,7 +6,7 @@ import {
   Terminal, ShieldCheck, Calendar as CalendarIcon, Save,
   Search, Upload, X, Filter, RefreshCcw, LayoutDashboard,
   ChevronRight, ArrowRight, Table, Layers, Plus, Trash2, Mail,
-  Eye, EyeOff
+  Eye, EyeOff, MapPin, Briefcase
 } from 'lucide-react';
 import axios from 'axios';
 
@@ -21,11 +21,14 @@ export default function Dashboard() {
     NAME_FILTER: '',
     ROLE_FILTER: '',
     TEAM_FILTER: '',
-    options: { roles: [], teams: [], names: [] }
+    REGION_FILTER: '',
+    SUBREGION_FILTER: '',
+    options: { roles: [], regions: [], subregions: [], names: [] }
   });
   const [roster, setRoster] = useState([]);
   const [matrix, setMatrix] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [matrixSearch, setMatrixSearch] = useState('');
   const [progress, setProgress] = useState({ msg: 'Ready', value: 0, status: 'idle' });
   const [logs, setLogs] = useState([]);
   const logEndRef = useRef(null);
@@ -53,9 +56,9 @@ export default function Dashboard() {
     } catch (err) { console.error("Roster fetch failed", err); }
   };
 
-  const fetchMatrix = async () => {
+  const fetchMatrix = async (query = '') => {
     try {
-      const res = await axios.get(`${API_BASE}/matrix`);
+      const res = await axios.get(`${API_BASE}/matrix`, { params: { search: query } });
       setMatrix(res.data);
     } catch (err) { console.error("Matrix fetch failed", err); }
   };
@@ -79,7 +82,7 @@ export default function Dashboard() {
   const saveConfig = async () => {
     try {
       await axios.post(`${API_BASE}/config`, { ...config, DISK_CLEANUP_DAYS: 14 });
-      alert("Reporting scope saved!");
+      alert("Reporting scope and filters saved!");
     } catch (err) { alert("Failed to save settings"); }
   };
 
@@ -100,86 +103,84 @@ export default function Dashboard() {
       const res = await axios.post(`${API_BASE}/roster/import`, formData);
       alert(res.data.message);
       fetchRoster();
-      fetchMatrix(); // Refresh matrix as new combinations might exist
+      fetchMatrix();
     } catch (err) { alert("Import failed: " + (err.response?.data?.detail || err.message)); }
   };
 
   const saveMatrix = async () => {
     try {
       await axios.post(`${API_BASE}/matrix`, matrix);
-      alert("Ownership Matrix saved! Roster assignments and inclusion flags updated.");
+      alert("Lookups saved! Roster managers and inclusion status updated.");
       fetchRoster();
     } catch (err) { alert("Failed to save matrix"); }
   };
 
   // --- Derived Stats ---
   const activeMembers = roster.filter(m => m.Include).length;
-  const uniqueRoles = new Set(roster.map(m => m.Role)).size;
-  const uniqueTeams = new Set(roster.map(m => `${m.Region}|${m.SubRegion}`)).size;
+  const uniqueRolesCount = new Set(roster.map(m => m.Role)).size;
+  const uniqueTeamsCount = new Set(roster.map(m => `${m.Region}|${m.SubRegion}`)).size;
 
   return (
-    <div className="min-h-screen bg-[#F1F5F9] text-slate-900 font-sans flex">
-      {/* Modern Slim Sidebar */}
-      <aside className="w-72 bg-slate-950 text-white h-screen sticky top-0 flex flex-col p-6 shadow-2xl border-r border-white/5">
-        <div className="flex items-center gap-4 mb-12 px-2">
-          <div className="p-2.5 bg-blue-600 rounded-2xl shadow-lg shadow-blue-500/40">
-            <Layers size={24} className="text-white" />
+    <div className="min-h-screen bg-[#F1F5F9] text-slate-900 font-sans flex overflow-hidden h-screen">
+      {/* Sidebar */}
+      <aside className="w-64 bg-slate-950 text-white h-full flex flex-col p-5 shadow-2xl shrink-0 border-r border-white/5">
+        <div className="flex items-center gap-3 mb-10 px-2">
+          <div className="p-2 bg-blue-600 rounded-xl shadow-lg shadow-blue-500/30">
+            <Layers size={20} className="text-white" />
           </div>
           <div>
-            <h1 className="text-lg font-black tracking-tight leading-none uppercase italic">DAILY WORK</h1>
-            <span className="text-[10px] font-bold text-blue-400 tracking-[0.2em] uppercase">Done Report</span>
+            <h1 className="text-base font-black tracking-tight leading-none uppercase italic">DAILY WORK</h1>
+            <span className="text-[9px] font-bold text-blue-400 tracking-[0.2em] uppercase">Done Report</span>
           </div>
         </div>
 
-        <nav className="flex-1 space-y-2">
-          <NavItem icon={<LayoutDashboard size={20}/>} label="Operations" active={activeTab === 'operations'} onClick={() => setActiveTab('operations')} />
-          <NavItem icon={<Users size={20}/>} label="Team Roster" active={activeTab === 'roster'} onClick={() => setActiveTab('roster')} />
-          <NavItem icon={<Table size={20}/>} label="Ownership Matrix" active={activeTab === 'matrix'} onClick={() => setActiveTab('matrix')} />
+        <nav className="flex-1 space-y-1.5">
+          <NavItem icon={<LayoutDashboard size={18}/>} label="Operations" active={activeTab === 'operations'} onClick={() => setActiveTab('operations')} />
+          <NavItem icon={<Users size={18}/>} label="Roster Manager" active={activeTab === 'roster'} onClick={() => setActiveTab('roster')} />
+          <NavItem icon={<Table size={18}/>} label="Ownership Matrix" active={activeTab === 'matrix'} onClick={() => setActiveTab('matrix')} />
         </nav>
         
-        <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
-            <div className="flex items-center justify-between mb-2">
-                <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">System Engine</span>
-                <div className={`w-2 h-2 rounded-full ${progress.status === 'running' ? 'bg-blue-500 animate-pulse' : 'bg-emerald-500'}`}></div>
+        <div className="mt-auto p-4 bg-white/5 rounded-2xl border border-white/5">
+            <div className="flex items-center justify-between mb-1.5">
+                <span className="text-[8px] font-black text-slate-500 uppercase tracking-widest text-nowrap">Core Engine</span>
+                <div className={`w-1.5 h-1.5 rounded-full ${progress.status === 'running' ? 'bg-blue-500 animate-pulse' : 'bg-emerald-500'}`}></div>
             </div>
-            <p className="text-xs font-bold text-slate-300 truncate">{progress.msg}</p>
+            <p className="text-[10px] font-bold text-slate-300 truncate uppercase tracking-tighter">{progress.msg}</p>
         </div>
       </aside>
 
-      <main className="flex-1 p-12 overflow-y-auto">
+      <main className="flex-1 overflow-y-auto bg-[#F8FAFC]">
         {activeTab === 'operations' && (
-          <div className="max-w-6xl space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <header className="flex justify-between items-start">
+          <div className="p-10 space-y-8 animate-in fade-in slide-in-from-bottom-2 duration-500 max-w-[1400px] mx-auto">
+            <header className="flex justify-between items-start border-b border-slate-200 pb-8">
               <div>
-                <h2 className="text-4xl font-black tracking-tight text-slate-900">Execution Hub</h2>
-                <p className="text-slate-500 font-medium mt-1 italic">Configure reporting scope and execute delivery pipeline.</p>
+                <h2 className="text-3xl font-black tracking-tighter text-slate-900 uppercase italic">Command Center</h2>
+                <p className="text-slate-400 font-bold text-xs uppercase tracking-widest mt-1">Configure reporting scope and execute delivery pipeline.</p>
               </div>
               <div className="flex gap-3">
-                <button onClick={saveConfig} className="px-6 py-3 bg-white border border-slate-200 rounded-2xl font-bold text-slate-600 hover:bg-slate-50 transition-all flex items-center gap-2 shadow-sm">
-                  <Save size={18} /> Save Config
+                <button onClick={saveConfig} className="px-5 py-2.5 bg-white border border-slate-200 rounded-xl font-bold text-slate-600 hover:bg-slate-50 transition-all flex items-center gap-2 shadow-sm text-xs uppercase tracking-widest">
+                  <Save size={16} /> Save Config
                 </button>
                 <button 
                     onClick={triggerPipeline} 
                     disabled={progress.status === 'running'}
-                    className={`px-10 py-3 rounded-2xl font-black text-white transition-all shadow-xl flex items-center gap-3 ${progress.status === 'running' ? 'bg-slate-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 shadow-blue-500/20 active:scale-95 hover:-translate-y-0.5'}`}
+                    className={`px-8 py-2.5 rounded-xl font-black text-white transition-all shadow-lg flex items-center gap-2 text-xs uppercase tracking-widest ${progress.status === 'running' ? 'bg-slate-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 shadow-blue-500/20 active:scale-95'}`}
                 >
-                  <Play size={20} fill="white" />
+                  <Play size={16} fill="white" />
                   {progress.status === 'running' ? 'RUNNING...' : 'LAUNCH PIPELINE'}
                 </button>
               </div>
             </header>
 
             {/* Visual Stepper */}
-            <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-xl shadow-slate-200/50">
-                <div className="flex items-center justify-between mb-8">
-                    <h3 className="text-sm font-black text-slate-400 uppercase tracking-[0.2em]">Live Pipeline Progress</h3>
-                    <span className="text-xs font-black text-blue-600 bg-blue-50 px-3 py-1 rounded-full uppercase">{progress.value}% Complete</span>
+            <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
+                <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Pipeline Monitor</h3>
+                    <span className="text-[10px] font-black text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">{progress.value}%</span>
                 </div>
-                
-                <div className="relative h-4 bg-slate-100 rounded-full overflow-hidden mb-12">
+                <div className="relative h-2.5 bg-slate-100 rounded-full overflow-hidden mb-6">
                     <div className="absolute top-0 left-0 h-full bg-blue-600 transition-all duration-1000 ease-out" style={{ width: `${progress.value}%` }}></div>
                 </div>
-
                 <div className="grid grid-cols-4 gap-4">
                     <StepItem label="Validation" active={progress.value >= 10} done={progress.value > 15} />
                     <StepItem label="Data Sync" active={progress.value >= 30} done={progress.value > 35} />
@@ -188,108 +189,106 @@ export default function Dashboard() {
                 </div>
             </div>
 
-            {/* Filter Suite */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-              <FilterCard label="Report Date" icon={<CalendarIcon size={14}/>}>
-                 <input type="date" value={config.REPORT_DATE_OVERRIDE} onChange={(e) => setConfig({...config, REPORT_DATE_OVERRIDE: e.target.value})} className="w-full bg-transparent font-black outline-none mt-1"/>
+            {/* High-Density Filter Suite */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <FilterCard label="Report Date" icon={<CalendarIcon size={12}/>}>
+                 <input type="date" value={config.REPORT_DATE_OVERRIDE} onChange={(e) => setConfig({...config, REPORT_DATE_OVERRIDE: e.target.value})} className="w-full bg-transparent font-black outline-none mt-1 text-sm"/>
               </FilterCard>
               
-              <FilterCard label="Names (CSV)" icon={<Users size={14}/>}>
-                <input type="text" placeholder="Search Names..." list="names-list" value={config.NAME_FILTER} onChange={(e) => setConfig({...config, NAME_FILTER: e.target.value})} className="w-full bg-transparent font-black outline-none mt-1 text-sm"/>
-                <datalist id="names-list">{config.options?.names?.map(n => <option key={n} value={n}/>)}</datalist>
-              </FilterCard>
-
-              <FilterCard label="Roles (CSV)" icon={<Settings size={14}/>}>
-                <input type="text" placeholder="Search Roles..." list="roles-list" value={config.ROLE_FILTER} onChange={(e) => setConfig({...config, ROLE_FILTER: e.target.value})} className="w-full bg-transparent font-black outline-none mt-1 text-sm"/>
+              <FilterCard label="Roles (Multi-Select)" icon={<Briefcase size={12}/>}>
+                <input type="text" placeholder="Separate with commas..." list="roles-list" value={config.ROLE_FILTER} onChange={(e) => setConfig({...config, ROLE_FILTER: e.target.value})} className="w-full bg-transparent font-black outline-none mt-1 text-xs placeholder:font-bold placeholder:text-slate-300"/>
                 <datalist id="roles-list">{config.options?.roles?.map(r => <option key={r} value={r}/>)}</datalist>
               </FilterCard>
 
-              <FilterCard label="Teams/Regions" icon={<Filter size={14}/>}>
-                <input type="text" placeholder="Search Teams..." list="teams-list" value={config.TEAM_FILTER} onChange={(e) => setConfig({...config, TEAM_FILTER: e.target.value})} className="w-full bg-transparent font-black outline-none mt-1 text-sm"/>
-                <datalist id="teams-list">{config.options?.teams?.map(t => <option key={t} value={t}/>)}</datalist>
+              <FilterCard label="Regions (Multi-Select)" icon={<MapPin size={12}/>}>
+                <input type="text" placeholder="Separate with commas..." list="regions-list" value={config.REGION_FILTER || ''} onChange={(e) => setConfig({...config, REGION_FILTER: e.target.value})} className="w-full bg-transparent font-black outline-none mt-1 text-xs placeholder:font-bold placeholder:text-slate-300"/>
+                <datalist id="regions-list">{config.options?.regions?.map(r => <option key={r} value={r}/>)}</datalist>
+              </FilterCard>
+
+              <FilterCard label="Sub Regions (Multi-Select)" icon={<MapPin size={12}/>}>
+                <input type="text" placeholder="Separate with commas..." list="subregions-list" value={config.SUBREGION_FILTER || ''} onChange={(e) => setConfig({...config, SUBREGION_FILTER: e.target.value})} className="w-full bg-transparent font-black outline-none mt-1 text-xs placeholder:font-bold placeholder:text-slate-300"/>
+                <datalist id="subregions-list">{config.options?.subregions?.map(t => <option key={t} value={t}/>)}</datalist>
               </FilterCard>
             </div>
 
-            {/* Pipeline Controls */}
-            <div className="flex gap-6">
-                <label className="flex-1 p-6 bg-white rounded-3xl border border-slate-200 shadow-sm flex items-center justify-between cursor-pointer hover:border-blue-300 transition-all">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <label className="p-5 bg-white rounded-3xl border border-slate-200 shadow-sm flex items-center justify-between cursor-pointer hover:border-blue-300 transition-all">
                     <div>
-                        <p className="font-black text-slate-800 uppercase tracking-tighter">DRY RUN MODE</p>
-                        <p className="text-xs font-bold text-slate-400">Generate previews without sending emails</p>
+                        <p className="font-black text-slate-800 text-xs uppercase tracking-widest">DRY RUN MODE</p>
+                        <p className="text-[10px] font-bold text-slate-400 uppercase mt-0.5">Generate previews without sending</p>
                     </div>
-                    <input type="checkbox" checked={config.DRY_RUN} onChange={(e) => setConfig({...config, DRY_RUN: e.target.checked})} className="w-6 h-6 accent-blue-600 rounded-lg"/>
+                    <input type="checkbox" checked={config.DRY_RUN} onChange={(e) => setConfig({...config, DRY_RUN: e.target.checked})} className="w-5 h-5 accent-blue-600 rounded-lg shadow-inner"/>
                 </label>
-                <div className="flex-1 p-6 bg-slate-950 rounded-3xl border border-slate-800 shadow-xl flex items-center gap-6 overflow-hidden relative">
-                    <Terminal className="text-slate-700 shrink-0" size={40} />
-                    <div className="font-mono text-[11px] text-slate-400 truncate">
+                <div className="p-5 bg-slate-950 rounded-3xl border border-slate-800 shadow-xl flex items-center gap-4 overflow-hidden relative">
+                    <Terminal className="text-slate-700 shrink-0" size={24} />
+                    <div className="font-mono text-[10px] text-slate-400 truncate tracking-tight">
                         {logs.slice(-1)[0]?.msg || 'Pipeline console ready...'}
                     </div>
-                    <div className="absolute right-0 top-0 h-full w-24 bg-gradient-to-l from-slate-950 to-transparent"></div>
+                    <div className="absolute right-0 top-0 h-full w-12 bg-gradient-to-l from-slate-950 to-transparent"></div>
                 </div>
             </div>
           </div>
         )}
 
         {activeTab === 'roster' && (
-          <div className="space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <header className="flex justify-between items-center">
+          <div className="p-10 space-y-8 animate-in fade-in slide-in-from-bottom-2 duration-500 max-w-[1400px] mx-auto">
+            <header className="flex justify-between items-center border-b border-slate-200 pb-8">
                 <div>
-                    <h2 className="text-4xl font-black tracking-tight text-slate-900 uppercase">Roster Manager</h2>
-                    <p className="text-slate-500 font-medium mt-1 italic">Official registry of team members and metadata.</p>
+                    <h2 className="text-3xl font-black tracking-tighter text-slate-900 uppercase italic">Roster Manager</h2>
+                    <p className="text-slate-400 font-bold text-xs uppercase tracking-widest mt-1 italic">Official database of active team members.</p>
                 </div>
-                <div className="flex gap-4">
+                <div className="flex gap-3">
                     <div className="relative group">
-                        <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-500 transition-colors" size={18} />
+                        <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-500 transition-colors" size={16} />
                         <input 
-                            type="text" placeholder="Search staff registry..." value={searchQuery}
+                            type="text" placeholder="Search email, name or role..." value={searchQuery}
                             onChange={(e) => {setSearchQuery(e.target.value); fetchRoster(e.target.value);}}
-                            className="pl-14 pr-6 py-4 bg-white border border-slate-200 rounded-2xl outline-none focus:ring-4 focus:ring-blue-500/10 w-96 transition-all font-bold shadow-sm"
+                            className="pl-12 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl outline-none focus:ring-4 focus:ring-blue-500/10 w-80 transition-all font-bold text-sm shadow-sm"
                         />
                     </div>
-                    <button onClick={() => fileInputRef.current.click()} className="flex items-center gap-3 px-8 py-4 rounded-2xl font-black bg-slate-900 text-white hover:bg-slate-800 transition-all shadow-xl shadow-slate-900/10">
-                        <Upload size={20} /> IMPORT EXCEL
+                    <button onClick={() => fileInputRef.current.click()} className="flex items-center gap-2 px-6 py-2.5 rounded-xl font-black bg-slate-900 text-white hover:bg-slate-800 transition-all shadow-lg text-[10px] uppercase tracking-widest">
+                        <Upload size={14} /> Import List
                     </button>
                     <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".xlsx,.csv"/>
                 </div>
             </header>
 
-            {/* Roster Mini-Dashboard */}
-            <div className="grid grid-cols-3 gap-6 mb-6">
-                <StatCard label="Active Staff" value={activeMembers} icon={<CheckCircle2 className="text-emerald-500"/>} />
-                <StatCard label="Unique Roles" value={uniqueRoles} icon={<Settings className="text-blue-500"/>} />
-                <StatCard label="Total Teams" value={uniqueTeams} icon={<Layers className="text-purple-500"/>} />
+            <div className="grid grid-cols-3 gap-6">
+                <StatCard label="Active Staff" value={activeMembers} icon={<CheckCircle2 className="text-emerald-500" size={20}/>} />
+                <StatCard label="Unique Roles" value={uniqueRolesCount} icon={<Briefcase className="text-blue-500" size={20}/>} />
+                <StatCard label="Total Teams" value={uniqueTeamsCount} icon={<Layers className="text-purple-500" size={20}/>} />
             </div>
 
-            <div className="bg-white rounded-[3rem] shadow-2xl shadow-slate-200/50 border border-slate-200 overflow-hidden">
+            <div className="bg-white rounded-3xl shadow-xl shadow-slate-200/50 border border-slate-200 overflow-hidden">
               <table className="w-full text-left table-fixed">
                 <thead>
-                  <tr className="bg-slate-50 border-b border-slate-100 uppercase">
-                    <th className="p-6 font-black text-[10px] uppercase tracking-[0.2em] text-slate-400 w-1/3">Identity</th>
-                    <th className="p-6 font-black text-[10px] uppercase tracking-[0.2em] text-slate-400 w-1/3">Position & Team</th>
-                    <th className="p-6 font-black text-[10px] uppercase tracking-[0.2em] text-slate-400 w-1/4">Management</th>
-                    <th className="p-6 font-black text-[10px] uppercase tracking-[0.2em] text-slate-400 text-right w-24">Status</th>
+                  <tr className="bg-slate-50 border-b border-slate-100">
+                    <th className="p-6 font-black text-[10px] uppercase tracking-widest text-slate-400 w-1/3">Staff Identity</th>
+                    <th className="p-6 font-black text-[10px] uppercase tracking-widest text-slate-400 w-1/3">Role & Team Path</th>
+                    <th className="p-6 font-black text-[10px] uppercase tracking-widest text-slate-400 w-1/4">Manager (Lookup)</th>
+                    <th className="p-6 font-black text-[10px] uppercase tracking-widest text-slate-400 text-right w-24">Status</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
                   {roster.map((m, i) => (
                     <tr key={i} className="hover:bg-slate-50/50 transition-colors">
-                      <td className="p-6 py-4">
-                        <div className="font-black text-slate-900 text-sm truncate">{m.EmployeeName}</div>
-                        <div className="text-[10px] text-slate-400 font-bold truncate lowercase">{m.EmployeeEmail}</div>
+                      <td className="p-6 py-3">
+                        <div className="font-black text-slate-800 text-sm truncate uppercase tracking-tight">{m.EmployeeName}</div>
+                        <div className="text-[10px] text-slate-400 font-bold truncate lowercase mt-0.5">{m.EmployeeEmail}</div>
                       </td>
-                      <td className="p-6 py-4">
-                        <div className="font-black text-blue-600 text-[10px] uppercase tracking-tight line-clamp-1">{m.Role}</div>
-                        <div className="text-[10px] font-bold text-slate-500 mt-0.5 line-clamp-1 italic">{m.Region} — {m.SubRegion}</div>
-                        <div className="text-[9px] font-black text-slate-300 uppercase mt-0.5">Offs: {m.WeekOffs || 'None'}</div>
+                      <td className="p-6 py-3">
+                        <div className="font-black text-blue-600 text-[10px] uppercase tracking-tighter truncate leading-none mb-1">{m.Role}</div>
+                        <div className="text-[10px] font-black text-slate-500 truncate leading-none uppercase tracking-tighter italic">{m.Region} / {m.SubRegion}</div>
+                        <div className="text-[8px] font-black text-slate-300 uppercase mt-1 leading-none tracking-widest">Offs: {m.WeekOffs || 'None'}</div>
                       </td>
-                      <td className="p-6 py-4">
-                          <div className="flex items-center gap-2 font-black text-slate-600 text-[10px] truncate italic">
-                              <Mail size={12} className="text-slate-300" />
-                              {m.Manager || 'Not Assigned'}
+                      <td className="p-6 py-3">
+                          <div className="flex items-center gap-1.5 font-bold text-slate-400 text-[10px] truncate italic lowercase">
+                              <Mail size={10} className="text-slate-200 shrink-0" />
+                              <span className="truncate">{m.Manager || 'Pending Sync'}</span>
                           </div>
                       </td>
-                      <td className="p-6 py-4 text-right">
-                        <span className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest ${m.Include ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' : 'bg-slate-50 text-slate-400 border border-slate-100'}`}>
+                      <td className="p-6 py-3 text-right">
+                        <span className={`px-2.5 py-1 rounded-lg text-[8px] font-black uppercase tracking-widest border ${m.Include ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-slate-50 text-slate-400 border-slate-100'}`}>
                             {m.Include ? 'Active' : 'Archived'}
                         </span>
                       </td>
@@ -297,81 +296,86 @@ export default function Dashboard() {
                   ))}
                 </tbody>
               </table>
-              {roster.length === 0 && <div className="p-20 text-center text-slate-400 font-bold italic">No records found matching your search.</div>}
+              {roster.length === 0 && <div className="p-20 text-center text-slate-400 font-bold italic uppercase text-xs tracking-widest">Registry empty matching search.</div>}
             </div>
           </div>
         )}
 
         {activeTab === 'matrix' && (
-             <div className="space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-6xl">
-                <header className="flex justify-between items-end">
+             <div className="p-10 space-y-8 animate-in fade-in slide-in-from-bottom-2 duration-500 max-w-[1400px] mx-auto">
+                <header className="flex justify-between items-center border-b border-slate-200 pb-8 text-uppercase">
                     <div>
-                        <h2 className="text-4xl font-black tracking-tight text-slate-900 uppercase">Ownership Matrix</h2>
-                        <p className="text-slate-500 font-medium mt-1 italic">Combinations derived from roster. Edit only Owner & Inclusion.</p>
+                        <h2 className="text-3xl font-black tracking-tighter text-slate-900 uppercase italic">Ownership Matrix</h2>
+                        <p className="text-slate-400 font-bold text-xs uppercase tracking-widest mt-1 italic">Map managers to Role + Team combinations from Roster.</p>
                     </div>
                     <div className="flex gap-3">
-                        <button onClick={fetchMatrix} className="px-6 py-3 bg-white border border-slate-200 rounded-2xl font-bold text-slate-600 hover:bg-slate-50 transition-all flex items-center gap-2 shadow-sm">
-                            <RefreshCcw size={18} /> Refresh Logic
-                        </button>
-                        <button onClick={saveMatrix} className="px-8 py-3 bg-slate-900 text-white rounded-2xl font-black hover:bg-slate-800 transition-all flex items-center gap-2 shadow-xl shadow-slate-900/10">
-                            <Save size={18} /> SAVE LOOKUPS
+                        <div className="relative group">
+                            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-500 transition-colors" size={16} />
+                            <input 
+                                type="text" placeholder="Filter combinations..." value={matrixSearch}
+                                onChange={(e) => {setMatrixSearch(e.target.value); fetchMatrix(e.target.value);}}
+                                className="pl-12 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl outline-none focus:ring-4 focus:ring-blue-500/10 w-80 transition-all font-bold text-sm shadow-sm"
+                            />
+                        </div>
+                        <button onClick={saveMatrix} className="px-8 py-2.5 bg-slate-900 text-white rounded-xl font-black hover:bg-slate-800 transition-all shadow-xl shadow-slate-900/10 text-[10px] uppercase tracking-widest">
+                            Save Ownership
                         </button>
                     </div>
                 </header>
 
-                <div className="bg-blue-50 border border-blue-100 p-6 rounded-3xl flex gap-4 items-start">
-                    <AlertCircle className="text-blue-500 shrink-0" size={24} />
-                    <p className="text-sm font-bold text-blue-800 leading-relaxed">
-                        This table lists every unique <b>Role + Region + SubRegion</b> found in your team roster. 
-                        Assign a Manager Email here, and the system will automatically update the roster for you. 
-                        Toggle the eye icon to exclude specific groups from reports.
+                <div className="bg-blue-50 border border-blue-100 p-6 rounded-[2rem] flex gap-4 items-start">
+                    <AlertCircle className="text-blue-600 shrink-0" size={20} />
+                    <p className="text-[11px] font-bold text-blue-900 leading-relaxed uppercase tracking-tighter">
+                        This list is <b>Auto-Generated</b> from your roster. Assign a Manager Email to a group, and every person in that group will be updated. Use the eye icon to exclude groups from all reports.
                     </p>
                 </div>
 
-                <div className="bg-white rounded-[3rem] shadow-2xl shadow-slate-200/50 border border-slate-200 overflow-hidden">
+                <div className="bg-white rounded-[3rem] shadow-2xl border border-slate-200 overflow-hidden">
                     <table className="w-full text-left border-collapse">
                         <thead>
-                            <tr className="bg-slate-50/50 border-b border-slate-100 uppercase">
-                                <th className="p-6 font-black text-[10px] uppercase tracking-widest text-slate-400">Role Path</th>
-                                <th className="p-6 font-black text-[10px] uppercase tracking-widest text-slate-400">Team Path</th>
-                                <th className="p-6 font-black text-[10px] uppercase tracking-widest text-slate-400">Owner (Manager Email)</th>
-                                <th className="p-6 font-black text-[10px] uppercase tracking-widest text-slate-400 text-right">Scope</th>
+                            <tr className="bg-slate-50 border-b border-slate-100 uppercase">
+                                <th className="p-6 font-black text-[10px] uppercase tracking-[0.2em] text-slate-400">Role Path</th>
+                                <th className="p-6 font-black text-[10px] uppercase tracking-[0.2em] text-slate-400">Team Path (Region — Sub)</th>
+                                <th className="p-6 font-black text-[10px] uppercase tracking-[0.2em] text-slate-400">Manager Email</th>
+                                <th className="p-6 font-black text-[10px] uppercase tracking-[0.2em] text-slate-400 text-right w-32">Visibility</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-50">
                             {matrix.map((row, i) => (
-                                <tr key={i} className={`group ${!row.IncludeInReporting ? 'opacity-50 grayscale bg-slate-50/50' : ''}`}>
-                                    <td className="p-6">
-                                        <div className="font-black text-slate-700 text-sm uppercase">{row.Role || 'Generic'}</div>
+                                <tr key={i} className={`group ${!row.IncludeInReporting ? 'bg-slate-50/50' : ''}`}>
+                                    <td className="p-6 py-4">
+                                        <div className="font-black text-slate-800 text-xs uppercase tracking-tight">{row.Role || 'Generic'}</div>
                                     </td>
-                                    <td className="p-6">
-                                        <div className="font-bold text-slate-500 text-xs italic">{row.Region} — {row.SubRegion}</div>
+                                    <td className="p-6 py-4">
+                                        <div className="font-bold text-slate-400 text-[10px] uppercase italic tracking-tighter">{row.Region} — {row.SubRegion}</div>
                                     </td>
-                                    <td className="p-6">
+                                    <td className="p-6 py-4">
                                         <div className="relative group/input max-w-xs">
-                                            <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within/input:text-blue-500 transition-colors" size={14}/>
+                                            <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within/input:text-blue-500 transition-colors" size={12}/>
                                             <input 
                                                 type="text" 
-                                                placeholder="Assign manager email..."
+                                                placeholder="Assign manager..."
                                                 value={row.ManagerEmail} 
                                                 onChange={(e) => {const n=[...matrix]; n[i].ManagerEmail=e.target.value; setMatrix(n);}} 
-                                                className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:bg-white focus:ring-2 focus:ring-blue-500 font-bold text-blue-600 text-xs transition-all shadow-inner"
+                                                className={`w-full pl-9 pr-4 py-2 bg-slate-50/50 border border-slate-100 rounded-lg outline-none focus:bg-white focus:ring-2 focus:ring-blue-500 font-bold text-xs transition-all ${row.ManagerEmail ? 'text-blue-600' : 'text-slate-400 italic'}`}
                                             />
                                         </div>
                                     </td>
-                                    <td className="p-6 text-right">
+                                    <td className="p-6 py-4 text-right">
                                         <button 
                                             onClick={() => {const n=[...matrix]; n[i].IncludeInReporting=!n[i].IncludeInReporting; setMatrix(n);}}
-                                            className={`p-3 rounded-2xl transition-all ${row.IncludeInReporting ? 'bg-blue-50 text-blue-600 hover:bg-blue-100' : 'bg-slate-100 text-slate-400 hover:bg-slate-200'}`}
-                                            title={row.IncludeInReporting ? "Included in Reporting" : "Excluded from Reporting"}
+                                            className={`p-2.5 rounded-xl transition-all border ${row.IncludeInReporting ? 'bg-white text-blue-600 border-blue-100 hover:bg-blue-50' : 'bg-slate-50 text-slate-300 border-slate-200 hover:bg-slate-100'}`}
                                         >
-                                            {row.IncludeInReporting ? <Eye size={18}/> : <EyeOff size={18}/>}
+                                            {row.IncludeInReporting ? <Eye size={16}/> : <EyeOff size={16}/>}
                                         </button>
                                     </td>
                                 </tr>
                             ))}
                         </tbody>
                     </table>
+                    {matrix.length === 0 && (
+                        <div className="p-20 text-center text-slate-400 font-black uppercase text-[10px] tracking-widest italic opacity-50">No path combinations found in roster.</div>
+                    )}
                 </div>
              </div>
         )}
@@ -384,7 +388,7 @@ function NavItem({ icon, label, active, onClick }) {
   return (
     <button 
       onClick={onClick}
-      className={`w-full flex items-center gap-4 px-6 py-4 rounded-2xl font-black text-xs uppercase tracking-widest transition-all ${active ? 'bg-blue-600 text-white shadow-2xl shadow-blue-600/40' : 'text-slate-500 hover:text-white hover:bg-white/5'}`}
+      className={`w-full flex items-center gap-3 px-5 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all ${active ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/30' : 'text-slate-500 hover:text-white hover:bg-white/5'}`}
     >
       {icon} {label}
     </button>
@@ -393,19 +397,19 @@ function NavItem({ icon, label, active, onClick }) {
 
 function StepItem({ label, active, done }) {
     return (
-        <div className={`flex items-center gap-3 p-4 rounded-3xl transition-all border ${done ? 'bg-emerald-50 border-emerald-100' : active ? 'bg-blue-50 border-blue-100' : 'bg-slate-50 border-slate-100 opacity-40'}`}>
-            <div className={`w-8 h-8 rounded-full flex items-center justify-center font-black text-sm ${done ? 'bg-emerald-600 text-white' : active ? 'bg-blue-600 text-white' : 'bg-slate-200 text-slate-500'}`}>
-                {done ? <CheckCircle2 size={16}/> : <ChevronRight size={16}/>}
+        <div className={`flex items-center gap-2 p-3 rounded-2xl transition-all border ${done ? 'bg-emerald-50 border-emerald-100' : active ? 'bg-blue-50 border-blue-100' : 'bg-slate-50 border-slate-100 opacity-40'}`}>
+            <div className={`w-6 h-6 rounded-full flex items-center justify-center font-black text-[10px] ${done ? 'bg-emerald-600 text-white' : active ? 'bg-blue-600 text-white' : 'bg-slate-200 text-slate-500'}`}>
+                {done ? <CheckCircle2 size={12}/> : <ChevronRight size={12}/>}
             </div>
-            <span className={`text-xs font-black uppercase tracking-widest ${done ? 'text-emerald-700' : active ? 'text-blue-700' : 'text-slate-500'}`}>{label}</span>
+            <span className={`text-[10px] font-black uppercase tracking-widest ${done ? 'text-emerald-700' : active ? 'text-blue-700' : 'text-slate-500'}`}>{label}</span>
         </div>
     );
 }
 
 function FilterCard({ label, children, icon }) {
   return (
-    <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm hover:shadow-xl hover:shadow-slate-200/50 transition-all group">
-      <div className="flex items-center gap-2 text-slate-400 mb-3 font-black text-[10px] uppercase tracking-[0.2em] group-focus-within:text-blue-600 transition-colors">
+    <div className="bg-white p-4 rounded-3xl border border-slate-200 shadow-sm hover:shadow-lg hover:shadow-slate-200/40 transition-all group">
+      <div className="flex items-center gap-1.5 text-slate-400 mb-1.5 font-black text-[8px] uppercase tracking-[0.2em] group-focus-within:text-blue-600 transition-colors">
         {icon} <span>{label}</span>
       </div>
       <div className="text-slate-900 leading-none">{children}</div>
@@ -415,13 +419,13 @@ function FilterCard({ label, children, icon }) {
 
 function StatCard({ label, value, icon }) {
     return (
-      <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm flex items-center gap-5">
-        <div className="w-12 h-12 bg-slate-50 rounded-2xl flex items-center justify-center text-slate-600 border border-slate-100">
+      <div className="bg-white p-5 rounded-[2rem] border border-slate-200 shadow-sm flex items-center gap-4">
+        <div className="w-10 h-10 bg-slate-50 rounded-2xl flex items-center justify-center text-slate-400 border border-slate-100 shrink-0">
           {icon}
         </div>
-        <div>
-          <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.15em] mb-0.5">{label}</p>
-          <p className="text-2xl font-black text-slate-900 tracking-tighter">{value}</p>
+        <div className="min-w-0">
+          <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest truncate">{label}</p>
+          <p className="text-xl font-black text-slate-900 tracking-tighter leading-none mt-1">{value}</p>
         </div>
       </div>
     );

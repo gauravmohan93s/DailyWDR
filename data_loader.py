@@ -147,6 +147,7 @@ def _process_settings_dfs(team, measures, role_meas, hol_df, aliases, matrix_df)
     }
 
 def apply_config_filters(df: pd.DataFrame) -> pd.DataFrame:
+    """Filters a dataframe based on the current app_config.json settings."""
     from reporting_config import load_app_config
     cfg = load_app_config(); out = df.copy()
     
@@ -154,17 +155,24 @@ def apply_config_filters(df: pd.DataFrame) -> pd.DataFrame:
         if not filter_str: return df
         vals = [s.strip().lower() for s in filter_str.split(",") if s.strip()]
         if not vals: return df
-        return df[df[col].astype(str).str.lower().str.contains('|'.join(vals))]
+        # Join with | for regex match
+        pattern = '|'.join([re.escape(v) for v in vals])
+        return df[df[col].astype(str).str.lower().str.contains(pattern)]
 
     out = _apply_list_filter(out, "EmployeeName", cfg.get("NAME_FILTER"))
     out = _apply_list_filter(out, "Role", cfg.get("ROLE_FILTER"))
+    out = _apply_list_filter(out, "Region", cfg.get("REGION_FILTER"))
+    out = _apply_list_filter(out, "SubRegion", cfg.get("SUBREGION_FILTER"))
     
+    # Backward compatibility for combined TEAM_FILTER if still used
     tf = str(cfg.get("TEAM_FILTER", "")).strip().lower()
     if tf:
-        vals = [s.strip() for s in tf.split(",") if s.strip()]
-        mask = out["Region"].astype(str).str.lower().str.contains('|'.join(vals)) | \
-               out["SubRegion"].astype(str).str.lower().str.contains('|'.join(vals))
+        vals = [re.escape(s.strip()) for s in tf.split(",") if s.strip()]
+        pattern = '|'.join(vals)
+        mask = out["Region"].astype(str).str.lower().str.contains(pattern) | \
+               out["SubRegion"].astype(str).str.lower().str.contains(pattern)
         out = out[mask]
+        
     return out
 
 def load_summary(path: Path, sheet: str = "summary_daily_all", report_date: dt.date = None) -> pd.DataFrame:
@@ -202,9 +210,9 @@ def get_filter_options():
     try:
         conn = sqlite3.connect(LOCAL_DB_PATH)
         roles = sorted(pd.read_sql("SELECT DISTINCT Role FROM roster", conn)["Role"].dropna().tolist())
-        regions = pd.read_sql("SELECT DISTINCT Region, SubRegion FROM roster", conn)
-        teams = sorted(list(set(regions["Region"].dropna().tolist() + regions["SubRegion"].dropna().tolist())))
+        regions = sorted(pd.read_sql("SELECT DISTINCT Region FROM roster", conn)["Region"].dropna().tolist())
+        subregions = sorted(pd.read_sql("SELECT DISTINCT SubRegion FROM roster", conn)["SubRegion"].dropna().tolist())
         names = sorted(pd.read_sql("SELECT DISTINCT EmployeeName FROM roster", conn)["EmployeeName"].dropna().tolist())
         conn.close()
-        return {"roles": roles, "teams": teams, "names": names}
-    except: return {"roles": [], "teams": [], "names": []}
+        return {"roles": roles, "regions": regions, "subregions": subregions, "names": names}
+    except: return {"roles": [], "regions": [], "subregions": [], "names": []}

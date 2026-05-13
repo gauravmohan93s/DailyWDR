@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-KC Analytics API Server (FastAPI) - Enterprise Version (v1.2.2)
-- Auto-generates Ownership Matrix combinations.
-- Dynamic Manager & Inclusion syncing.
+KC Analytics API Server (FastAPI) - Enterprise Version (v1.2.3)
+- Granular Multi-Filter support.
+- Role-focused logic (replacing Designation).
+- Auto-generating Ownership Matrix with Exclusion flags.
 """
 
 from fastapi import FastAPI, BackgroundTasks, WebSocket, HTTPException, UploadFile, File
@@ -25,7 +26,7 @@ from reporting_config import (
 )
 from data_loader import get_filter_options, norm_token
 
-app = FastAPI(title="KC Reporting API", version="1.2.2")
+app = FastAPI(title="KC Reporting API", version="1.2.3")
 
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
@@ -36,6 +37,8 @@ class AppConfig(BaseModel):
     DISK_CLEANUP_DAYS: int
     NAME_FILTER: Optional[str] = ""
     ROLE_FILTER: Optional[str] = ""
+    REGION_FILTER: Optional[str] = ""
+    SUBREGION_FILTER: Optional[str] = ""
     TEAM_FILTER: Optional[str] = ""
 
 class MatrixEntry(BaseModel):
@@ -130,7 +133,9 @@ def update_config(config: AppConfig):
 def get_roster(search: Optional[str] = None):
     conn = sqlite3.connect(LOCAL_DB_PATH)
     query = "SELECT * FROM roster"
-    if search: query += f" WHERE EmployeeName LIKE '%{search}%' OR EmployeeEmail LIKE '%{search}%' OR Role LIKE '%{search}%'"
+    if search:
+        # Simple global search
+        query += f" WHERE EmployeeName LIKE '%{search}%' OR EmployeeEmail LIKE '%{search}%' OR Role LIKE '%{search}%' OR Region LIKE '%{search}%' OR SubRegion LIKE '%{search}%'"
     df = pd.read_sql(query, conn)
     conn.close()
     return df.to_dict(orient="records")
@@ -169,14 +174,13 @@ async def import_roster(file: UploadFile = File(...)):
     except Exception as e: raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/matrix")
-def get_matrix():
+def get_matrix(search: Optional[str] = None):
     conn = sqlite3.connect(LOCAL_DB_PATH)
     try:
-        # 1. Get existing matrix
         try: matrix_df = pd.read_sql("SELECT * FROM management_matrix", conn)
         except: matrix_df = pd.DataFrame(columns=["Role", "Region", "SubRegion", "ManagerEmail", "IncludeInReporting"])
 
-        # 2. Auto-generate combinations from current roster
+        # Auto-generate combinations
         roster_df = pd.read_sql("SELECT DISTINCT Role, Region, SubRegion FROM roster", conn)
         for df in [matrix_df, roster_df]:
             for c in ["Role", "Region", "SubRegion"]: df[c] = df[c].fillna("").astype(str).str.strip()
@@ -184,8 +188,15 @@ def get_matrix():
         merged = roster_df.merge(matrix_df, on=["Role", "Region", "SubRegion"], how="left")
         merged["ManagerEmail"] = merged["ManagerEmail"].fillna("")
         merged["IncludeInReporting"] = merged["IncludeInReporting"].fillna(1)
+        
+        if search:
+            s = search.lower()
+            mask = merged["Role"].str.lower().str.contains(s) | \
+                   merged["Region"].str.lower().str.contains(s) | \
+                   merged["SubRegion"].str.lower().str.contains(s) | \
+                   merged["ManagerEmail"].str.lower().str.contains(s)
+            merged = merged[mask]
 
-        # 3. Persist and Return
         merged.to_sql("management_matrix", conn, if_exists="replace", index=False)
         conn.commit()
         return merged.to_dict(orient="records")
