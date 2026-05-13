@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-KC Analytics API Server (FastAPI) - Enterprise Version (v1.2.3)
-- Granular Multi-Filter support.
-- Role-focused logic (replacing Designation).
-- Auto-generating Ownership Matrix with Exclusion flags.
+KC Analytics API Server (FastAPI) - Enterprise Version (v1.2.4)
+- SMART MERGE (UPSERT) for Roster Import: Preserves existing metadata.
+- Strict Role Mapping: Prevents overwriting Roles with raw Designation strings.
 """
 
 from fastapi import FastAPI, BackgroundTasks, WebSocket, HTTPException, UploadFile, File
@@ -26,7 +25,7 @@ from reporting_config import (
 )
 from data_loader import get_filter_options, norm_token
 
-app = FastAPI(title="KC Reporting API", version="1.2.3")
+app = FastAPI(title="KC Reporting API", version="1.2.4")
 
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
@@ -134,7 +133,6 @@ def get_roster(search: Optional[str] = None):
     conn = sqlite3.connect(LOCAL_DB_PATH)
     query = "SELECT * FROM roster"
     if search:
-        # Simple global search
         query += f" WHERE EmployeeName LIKE '%{search}%' OR EmployeeEmail LIKE '%{search}%' OR Role LIKE '%{search}%' OR Region LIKE '%{search}%' OR SubRegion LIKE '%{search}%'"
     df = pd.read_sql(query, conn)
     conn.close()
@@ -142,36 +140,80 @@ def get_roster(search: Optional[str] = None):
 
 @app.post("/roster/import")
 async def import_roster(file: UploadFile = File(...)):
+    """Import roster with Smart Merge (UPSERT) to preserve existing metadata."""
+    print(f"[IMPORT] Processing file: {file.filename}")
     contents = await file.read()
     try:
-        df = pd.read_excel(io.BytesIO(contents), engine='openpyxl') if file.filename.endswith(('.xlsx', '.xls')) else pd.read_csv(io.BytesIO(contents))
+        if file.filename.endswith(('.xlsx', '.xls')):
+            df = pd.read_excel(io.BytesIO(contents), engine='openpyxl')
+        else:
+            df = pd.read_csv(io.BytesIO(contents))
+        
         raw_cols = {str(c).lower().strip(): c for c in df.columns}
+        
+        # Intelligent Mapping (STRICT Role definition)
         mapping = {
             "EmployeeEmail": ["email", "e-mail", "employee email", "user email", "email id", "email id (official)", "official email"],
             "EmployeeName": ["name", "employee name", "full name", "staff name", "user name"],
-            "Role": ["role", "designation", "position", "job title"],
+            "Role": ["role", "job role", "position", "job title"], # 'designation' removed to prevent bad overwrites
             "Region": ["region", "zone", "state", "territory"],
             "SubRegion": ["subregion", "sub region", "city", "branch", "location"],
             "WeekOffs": ["weekoff", "week-off", "off day", "week offs", "allocated weekoffs", "week off"]
         }
+        
         final_data = {}
         for target, aliases in mapping.items():
             found_col = next((raw_cols[a] for a in aliases if a in raw_cols), None)
-            final_data[target] = df[found_col] if found_col else ""
-        
-        new_df = pd.DataFrame(final_data)
-        new_df["EmployeeEmail"] = new_df["EmployeeEmail"].astype(str).str.strip().str.lower()
-        new_df = new_df[new_df["EmployeeEmail"].str.contains("@")].drop_duplicates(subset=["EmployeeEmail"]).copy()
-        
-        for c in ["Include","Manager","SendTo","SaturdayOffPattern"]: 
-            if c not in new_df.columns: new_df[c] = 1 if c == "Include" else ""
+            if found_col:
+                final_data[target] = df[found_col]
+            else:
+                final_data[target] = None # Mark as missing in import
 
+        incoming_df = pd.DataFrame(final_data)
+        incoming_df["EmployeeEmail"] = incoming_df["EmployeeEmail"].astype(str).str.strip().str.lower()
+        incoming_df = incoming_df[incoming_df["EmployeeEmail"].str.contains("@")].drop_duplicates(subset=["EmployeeEmail"]).copy()
+        
         conn = sqlite3.connect(LOCAL_DB_PATH)
-        new_df.to_sql("roster", conn, if_exists="replace", index=False)
+        # 1. Load existing roster
+        try:
+            existing_df = pd.read_sql("SELECT * FROM roster", conn)
+        except:
+            existing_df = pd.DataFrame(columns=["EmployeeEmail", "EmployeeName", "Role", "Region", "SubRegion", "WeekOffs", "Include", "Manager", "SendTo", "SaturdayOffPattern"])
+
+        # 2. PERFORM SMART MERGE (UPSERT)
+        processed_emails = set()
+        for _, row in incoming_df.iterrows():
+            email = row["EmployeeEmail"]
+            processed_emails.add(email)
+            # Only update columns that were actually present in the Excel file
+            update_data = {k: v for k, v in row.items() if v is not None and str(v).strip() != ""}
+            
+            if email in existing_df["EmployeeEmail"].values:
+                # Update existing record
+                idx = existing_df[existing_df["EmployeeEmail"] == email].index[0]
+                for col, val in update_data.items():
+                    existing_df.at[idx, col] = val
+            else:
+                # Insert new record
+                new_row = {c: "" for c in existing_df.columns}
+                new_row.update(update_data)
+                new_row["Include"] = 1 # Default to active
+                existing_df = pd.concat([existing_df, pd.DataFrame([new_row])], ignore_index=True)
+
+        # 3. Save merged result
+        existing_df.to_sql("roster", conn, if_exists="replace", index=False)
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_roster_email ON roster (EmployeeEmail)")
+        
+        # Sync with Matrix to ensure Managers are correct for updated members
+        sync_roster_managers(conn)
+        
         conn.commit(); conn.close()
-        return {"status": "success", "message": f"Successfully imported {len(new_df)} members."}
-    except Exception as e: raise HTTPException(status_code=500, detail=str(e))
+        
+        print(f"[IMPORT] Success! {len(incoming_df)} members processed via Smart Merge.")
+        return {"status": "success", "message": f"Successfully processed {len(incoming_df)} members. Existing Roles were preserved unless an explicit 'Role' column was found."}
+    except Exception as e:
+        print(f"[IMPORT ERROR] {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/matrix")
 def get_matrix(search: Optional[str] = None):

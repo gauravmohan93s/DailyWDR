@@ -1,33 +1,35 @@
 # Technical Refactor Plan: DailyWD-UK V2.0
 
-This document outlines the steps to move the DailyWD-UK pipeline into a professional, server-ready state.
+This document outlines the steps to move the DailyWD-UK pipeline into a professional, server-ready state with a user-friendly management interface.
 
 ## 🟢 PHASE 1: Core Optimization (COMPLETED)
 1. **Centralized Data & Settings Loader:** Consolidated logic into `data_loader.py`.
-2. **Database-Backed Summaries:** Migrated Excel to SQLite `daily_summary`.
-3. **Automated Settings Validator:** Pre-flight check to catch human errors.
-4. **SQL-Level Filtering:** High-performance data fetching.
+2. **Database-Backed Summaries:** Migrated Excel to SQLite `daily_summary` table.
+3. **Automated Settings Validator:** Pre-flight check added to catch Excel errors.
+4. **SQL-Level Filtering:** Optimized fetching for millions of rows.
 5. **Fully Centralized Paths:** Single source of truth for all file paths.
-6. **Decoupled Parallelism:** Stability for Outlook sending.
+6. **Decoupled Parallelism:** Parallel file generation + Sequential Outlook sending.
 7. **Automated Disk Cleanup:** Storage maintenance.
 
-## 🔵 PHASE 2: Full-Stack Modernization (NEXT.JS + FASTAPI)
+## 🔵 PHASE 2: Full-Stack Modernization (COMPLETED)
 **Goal:** Replace basic scripts with an enterprise-grade web application.
 
 ### 1. Backend Service (FastAPI)
-* **Status:** IN PROGRESS
-* Implement `api_server.py` to expose reporting logic via REST.
-* Add WebSocket support for real-time log streaming.
-* Wrap existing `run_daily_flow.py` as a background task.
+* **Status:** ✅ DONE
+* Implemented `api_server.py` with REST and WebSocket support.
+* Developed "Smart Merge" UPSERT logic for persistent roster updates.
+* Automated "Ownership Matrix" lookup and manager syncing.
 
 ### 2. Frontend Dashboard (Next.js 14)
-* **Goal:** A beautiful, responsive UI for non-technical users.
-* Use Tailwind CSS and modern components for the "Command Center".
-* Create a dedicated "Team Manager" grid with real-time database syncing.
+* **Status:** ✅ DONE
+* High-density UI for managing large teams.
+* Visual Progress Stepper for non-technical observability.
+* Granular multi-select filters (Role, Region, SubRegion).
 
-### 3. API Integration & Packaging
-* Connect the Next.js frontend to the FastAPI backend.
-* Create a single `start_system.bat` file to launch both servers.
+### 3. Intelligent Import
+* **Status:** ✅ DONE
+* Column mapping for non-standard Excel headers (e.g., "Email ID (Official)").
+* Metadata support for Week-offs and metadata preservation.
 
 ---
-**Updated on:** 12 May 2026 (Full-Stack Modernization Phase)
+**Updated on:** 12 May 2026 (Enterprise Suite Finalized)
