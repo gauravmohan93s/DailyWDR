@@ -37,7 +37,7 @@ from reporting_config import (
     SIG_IMAGE_PATH, WKHTMLTOPDF_PATH,
     DRY_RUN_GLOBAL as DRY_RUN
 )
-from data_loader import load_settings, load_summary, apply_config_filters
+from data_loader import load_settings, load_summary, apply_config_filters, region_key
 
 # =========================== CONFIG =========================== #
 SUMMARY_SHEET = "summary_daily_all"

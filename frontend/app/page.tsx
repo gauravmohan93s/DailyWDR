@@ -5,7 +5,8 @@ import {
   Play, Settings, Users, History, AlertCircle, CheckCircle2, 
   Terminal, ShieldCheck, Calendar as CalendarIcon, Save,
   Search, Upload, X, Filter, RefreshCcw, LayoutDashboard,
-  ChevronRight, ArrowRight, Table, Layers
+  ChevronRight, ArrowRight, Table, Layers, Plus, Trash2, Mail,
+  Eye, EyeOff
 } from 'lucide-react';
 import axios from 'axios';
 
@@ -99,8 +100,22 @@ export default function Dashboard() {
       const res = await axios.post(`${API_BASE}/roster/import`, formData);
       alert(res.data.message);
       fetchRoster();
+      fetchMatrix(); // Refresh matrix as new combinations might exist
     } catch (err) { alert("Import failed: " + (err.response?.data?.detail || err.message)); }
   };
+
+  const saveMatrix = async () => {
+    try {
+      await axios.post(`${API_BASE}/matrix`, matrix);
+      alert("Ownership Matrix saved! Roster assignments and inclusion flags updated.");
+      fetchRoster();
+    } catch (err) { alert("Failed to save matrix"); }
+  };
+
+  // --- Derived Stats ---
+  const activeMembers = roster.filter(m => m.Include).length;
+  const uniqueRoles = new Set(roster.map(m => m.Role)).size;
+  const uniqueTeams = new Set(roster.map(m => `${m.Region}|${m.SubRegion}`)).size;
 
   return (
     <div className="min-h-screen bg-[#F1F5F9] text-slate-900 font-sans flex">
@@ -111,7 +126,7 @@ export default function Dashboard() {
             <Layers size={24} className="text-white" />
           </div>
           <div>
-            <h1 className="text-lg font-black tracking-tight leading-none">DAILY WORK</h1>
+            <h1 className="text-lg font-black tracking-tight leading-none uppercase italic">DAILY WORK</h1>
             <span className="text-[10px] font-bold text-blue-400 tracking-[0.2em] uppercase">Done Report</span>
           </div>
         </div>
@@ -133,11 +148,11 @@ export default function Dashboard() {
 
       <main className="flex-1 p-12 overflow-y-auto">
         {activeTab === 'operations' && (
-          <div className="max-w-6xl space-y-10">
+          <div className="max-w-6xl space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-500">
             <header className="flex justify-between items-start">
               <div>
                 <h2 className="text-4xl font-black tracking-tight text-slate-900">Execution Hub</h2>
-                <p className="text-slate-500 font-medium mt-1">Configure reporting filters and trigger daily delivery.</p>
+                <p className="text-slate-500 font-medium mt-1 italic">Configure reporting scope and execute delivery pipeline.</p>
               </div>
               <div className="flex gap-3">
                 <button onClick={saveConfig} className="px-6 py-3 bg-white border border-slate-200 rounded-2xl font-bold text-slate-600 hover:bg-slate-50 transition-all flex items-center gap-2 shadow-sm">
@@ -180,17 +195,17 @@ export default function Dashboard() {
               </FilterCard>
               
               <FilterCard label="Names (CSV)" icon={<Users size={14}/>}>
-                <input type="text" placeholder="Search Names..." list="names-list" value={config.NAME_FILTER} onChange={(e) => setConfig({...config, NAME_FILTER: e.target.value})} className="w-full bg-transparent font-black outline-none mt-1"/>
+                <input type="text" placeholder="Search Names..." list="names-list" value={config.NAME_FILTER} onChange={(e) => setConfig({...config, NAME_FILTER: e.target.value})} className="w-full bg-transparent font-black outline-none mt-1 text-sm"/>
                 <datalist id="names-list">{config.options?.names?.map(n => <option key={n} value={n}/>)}</datalist>
               </FilterCard>
 
               <FilterCard label="Roles (CSV)" icon={<Settings size={14}/>}>
-                <input type="text" placeholder="Search Roles..." list="roles-list" value={config.ROLE_FILTER} onChange={(e) => setConfig({...config, ROLE_FILTER: e.target.value})} className="w-full bg-transparent font-black outline-none mt-1"/>
+                <input type="text" placeholder="Search Roles..." list="roles-list" value={config.ROLE_FILTER} onChange={(e) => setConfig({...config, ROLE_FILTER: e.target.value})} className="w-full bg-transparent font-black outline-none mt-1 text-sm"/>
                 <datalist id="roles-list">{config.options?.roles?.map(r => <option key={r} value={r}/>)}</datalist>
               </FilterCard>
 
-              <FilterCard label="Teams (CSV)" icon={<Filter size={14}/>}>
-                <input type="text" placeholder="Search Teams..." list="teams-list" value={config.TEAM_FILTER} onChange={(e) => setConfig({...config, TEAM_FILTER: e.target.value})} className="w-full bg-transparent font-black outline-none mt-1"/>
+              <FilterCard label="Teams/Regions" icon={<Filter size={14}/>}>
+                <input type="text" placeholder="Search Teams..." list="teams-list" value={config.TEAM_FILTER} onChange={(e) => setConfig({...config, TEAM_FILTER: e.target.value})} className="w-full bg-transparent font-black outline-none mt-1 text-sm"/>
                 <datalist id="teams-list">{config.options?.teams?.map(t => <option key={t} value={t}/>)}</datalist>
               </FilterCard>
             </div>
@@ -199,7 +214,7 @@ export default function Dashboard() {
             <div className="flex gap-6">
                 <label className="flex-1 p-6 bg-white rounded-3xl border border-slate-200 shadow-sm flex items-center justify-between cursor-pointer hover:border-blue-300 transition-all">
                     <div>
-                        <p className="font-black text-slate-800">DRY RUN MODE</p>
+                        <p className="font-black text-slate-800 uppercase tracking-tighter">DRY RUN MODE</p>
                         <p className="text-xs font-bold text-slate-400">Generate previews without sending emails</p>
                     </div>
                     <input type="checkbox" checked={config.DRY_RUN} onChange={(e) => setConfig({...config, DRY_RUN: e.target.checked})} className="w-6 h-6 accent-blue-600 rounded-lg"/>
@@ -219,8 +234,8 @@ export default function Dashboard() {
           <div className="space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-500">
             <header className="flex justify-between items-center">
                 <div>
-                    <h2 className="text-4xl font-black tracking-tight text-slate-900">Roster Manager</h2>
-                    <p className="text-slate-500 font-medium mt-1">Official registry of team members and metadata.</p>
+                    <h2 className="text-4xl font-black tracking-tight text-slate-900 uppercase">Roster Manager</h2>
+                    <p className="text-slate-500 font-medium mt-1 italic">Official registry of team members and metadata.</p>
                 </div>
                 <div className="flex gap-4">
                     <div className="relative group">
@@ -238,30 +253,43 @@ export default function Dashboard() {
                 </div>
             </header>
 
+            {/* Roster Mini-Dashboard */}
+            <div className="grid grid-cols-3 gap-6 mb-6">
+                <StatCard label="Active Staff" value={activeMembers} icon={<CheckCircle2 className="text-emerald-500"/>} />
+                <StatCard label="Unique Roles" value={uniqueRoles} icon={<Settings className="text-blue-500"/>} />
+                <StatCard label="Total Teams" value={uniqueTeams} icon={<Layers className="text-purple-500"/>} />
+            </div>
+
             <div className="bg-white rounded-[3rem] shadow-2xl shadow-slate-200/50 border border-slate-200 overflow-hidden">
-              <table className="w-full text-left">
+              <table className="w-full text-left table-fixed">
                 <thead>
-                  <tr className="bg-slate-50 border-b border-slate-100">
-                    <th className="p-8 font-black text-[10px] uppercase tracking-[0.2em] text-slate-400">Team Member</th>
-                    <th className="p-8 font-black text-[10px] uppercase tracking-[0.2em] text-slate-400">Team Definition</th>
-                    <th className="p-8 font-black text-[10px] uppercase tracking-[0.2em] text-slate-400">Ownership</th>
-                    <th className="p-8 font-black text-[10px] uppercase tracking-[0.2em] text-slate-400 text-right">Status</th>
+                  <tr className="bg-slate-50 border-b border-slate-100 uppercase">
+                    <th className="p-6 font-black text-[10px] uppercase tracking-[0.2em] text-slate-400 w-1/3">Identity</th>
+                    <th className="p-6 font-black text-[10px] uppercase tracking-[0.2em] text-slate-400 w-1/3">Position & Team</th>
+                    <th className="p-6 font-black text-[10px] uppercase tracking-[0.2em] text-slate-400 w-1/4">Management</th>
+                    <th className="p-6 font-black text-[10px] uppercase tracking-[0.2em] text-slate-400 text-right w-24">Status</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
                   {roster.map((m, i) => (
                     <tr key={i} className="hover:bg-slate-50/50 transition-colors">
-                      <td className="p-8">
-                        <div className="font-black text-slate-900 text-lg leading-tight">{m.EmployeeName}</div>
-                        <div className="text-sm text-slate-400 font-bold">{m.EmployeeEmail}</div>
+                      <td className="p-6 py-4">
+                        <div className="font-black text-slate-900 text-sm truncate">{m.EmployeeName}</div>
+                        <div className="text-[10px] text-slate-400 font-bold truncate lowercase">{m.EmployeeEmail}</div>
                       </td>
-                      <td className="p-8">
-                        <div className="font-black text-slate-600">{m.Region} — {m.SubRegion}</div>
-                        <div className="text-[10px] font-black text-blue-500 uppercase mt-1">Offs: {m.WeekOffs || 'None'}</div>
+                      <td className="p-6 py-4">
+                        <div className="font-black text-blue-600 text-[10px] uppercase tracking-tight line-clamp-1">{m.Role}</div>
+                        <div className="text-[10px] font-bold text-slate-500 mt-0.5 line-clamp-1 italic">{m.Region} — {m.SubRegion}</div>
+                        <div className="text-[9px] font-black text-slate-300 uppercase mt-0.5">Offs: {m.WeekOffs || 'None'}</div>
                       </td>
-                      <td className="p-8 font-black text-slate-500">{m.Manager}</td>
-                      <td className="p-8 text-right">
-                        <span className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest ${m.Include ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-400'}`}>
+                      <td className="p-6 py-4">
+                          <div className="flex items-center gap-2 font-black text-slate-600 text-[10px] truncate italic">
+                              <Mail size={12} className="text-slate-300" />
+                              {m.Manager || 'Not Assigned'}
+                          </div>
+                      </td>
+                      <td className="p-6 py-4 text-right">
+                        <span className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest ${m.Include ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' : 'bg-slate-50 text-slate-400 border border-slate-100'}`}>
                             {m.Include ? 'Active' : 'Archived'}
                         </span>
                       </td>
@@ -269,40 +297,77 @@ export default function Dashboard() {
                   ))}
                 </tbody>
               </table>
+              {roster.length === 0 && <div className="p-20 text-center text-slate-400 font-bold italic">No records found matching your search.</div>}
             </div>
           </div>
         )}
 
         {activeTab === 'matrix' && (
-             <div className="space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                <header>
-                    <h2 className="text-4xl font-black tracking-tight text-slate-900">Ownership Matrix</h2>
-                    <p className="text-slate-500 font-medium mt-1">Define managers for specific Role-Region-SubRegion combinations.</p>
+             <div className="space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-6xl">
+                <header className="flex justify-between items-end">
+                    <div>
+                        <h2 className="text-4xl font-black tracking-tight text-slate-900 uppercase">Ownership Matrix</h2>
+                        <p className="text-slate-500 font-medium mt-1 italic">Combinations derived from roster. Edit only Owner & Inclusion.</p>
+                    </div>
+                    <div className="flex gap-3">
+                        <button onClick={fetchMatrix} className="px-6 py-3 bg-white border border-slate-200 rounded-2xl font-bold text-slate-600 hover:bg-slate-50 transition-all flex items-center gap-2 shadow-sm">
+                            <RefreshCcw size={18} /> Refresh Logic
+                        </button>
+                        <button onClick={saveMatrix} className="px-8 py-3 bg-slate-900 text-white rounded-2xl font-black hover:bg-slate-800 transition-all flex items-center gap-2 shadow-xl shadow-slate-900/10">
+                            <Save size={18} /> SAVE LOOKUPS
+                        </button>
+                    </div>
                 </header>
-                <div className="bg-amber-50 border border-amber-100 p-6 rounded-3xl flex gap-4 items-start">
-                    <AlertCircle className="text-amber-500 shrink-0" size={24} />
-                    <p className="text-sm font-bold text-amber-800 leading-relaxed">
-                        The <b>Manager</b> field in the Roster tab is automatically derived from this matrix. 
-                        When you update an email here, the system will re-map all matching employees to the new owner during the next pipeline run.
+
+                <div className="bg-blue-50 border border-blue-100 p-6 rounded-3xl flex gap-4 items-start">
+                    <AlertCircle className="text-blue-500 shrink-0" size={24} />
+                    <p className="text-sm font-bold text-blue-800 leading-relaxed">
+                        This table lists every unique <b>Role + Region + SubRegion</b> found in your team roster. 
+                        Assign a Manager Email here, and the system will automatically update the roster for you. 
+                        Toggle the eye icon to exclude specific groups from reports.
                     </p>
                 </div>
-                <div className="bg-white rounded-[3rem] shadow-xl border border-slate-200 p-4">
+
+                <div className="bg-white rounded-[3rem] shadow-2xl shadow-slate-200/50 border border-slate-200 overflow-hidden">
                     <table className="w-full text-left border-collapse">
                         <thead>
-                            <tr className="border-b border-slate-100">
-                                <th className="p-6 font-black text-xs uppercase text-slate-400">Role</th>
-                                <th className="p-6 font-black text-xs uppercase text-slate-400">Region</th>
-                                <th className="p-6 font-black text-xs uppercase text-slate-400">Sub Region</th>
-                                <th className="p-6 font-black text-xs uppercase text-slate-400">Owner (Manager Email)</th>
+                            <tr className="bg-slate-50/50 border-b border-slate-100 uppercase">
+                                <th className="p-6 font-black text-[10px] uppercase tracking-widest text-slate-400">Role Path</th>
+                                <th className="p-6 font-black text-[10px] uppercase tracking-widest text-slate-400">Team Path</th>
+                                <th className="p-6 font-black text-[10px] uppercase tracking-widest text-slate-400">Owner (Manager Email)</th>
+                                <th className="p-6 font-black text-[10px] uppercase tracking-widest text-slate-400 text-right">Scope</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-50">
                             {matrix.map((row, i) => (
-                                <tr key={i}>
-                                    <td className="p-6 font-black text-slate-800">{row.Role}</td>
-                                    <td className="p-6 font-bold text-slate-600">{row.Region}</td>
-                                    <td className="p-6 font-bold text-slate-600">{row.SubRegion}</td>
-                                    <td className="p-6 font-black text-blue-600 underline underline-offset-4">{row.ManagerEmail}</td>
+                                <tr key={i} className={`group ${!row.IncludeInReporting ? 'opacity-50 grayscale bg-slate-50/50' : ''}`}>
+                                    <td className="p-6">
+                                        <div className="font-black text-slate-700 text-sm uppercase">{row.Role || 'Generic'}</div>
+                                    </td>
+                                    <td className="p-6">
+                                        <div className="font-bold text-slate-500 text-xs italic">{row.Region} — {row.SubRegion}</div>
+                                    </td>
+                                    <td className="p-6">
+                                        <div className="relative group/input max-w-xs">
+                                            <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within/input:text-blue-500 transition-colors" size={14}/>
+                                            <input 
+                                                type="text" 
+                                                placeholder="Assign manager email..."
+                                                value={row.ManagerEmail} 
+                                                onChange={(e) => {const n=[...matrix]; n[i].ManagerEmail=e.target.value; setMatrix(n);}} 
+                                                className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:bg-white focus:ring-2 focus:ring-blue-500 font-bold text-blue-600 text-xs transition-all shadow-inner"
+                                            />
+                                        </div>
+                                    </td>
+                                    <td className="p-6 text-right">
+                                        <button 
+                                            onClick={() => {const n=[...matrix]; n[i].IncludeInReporting=!n[i].IncludeInReporting; setMatrix(n);}}
+                                            className={`p-3 rounded-2xl transition-all ${row.IncludeInReporting ? 'bg-blue-50 text-blue-600 hover:bg-blue-100' : 'bg-slate-100 text-slate-400 hover:bg-slate-200'}`}
+                                            title={row.IncludeInReporting ? "Included in Reporting" : "Excluded from Reporting"}
+                                        >
+                                            {row.IncludeInReporting ? <Eye size={18}/> : <EyeOff size={18}/>}
+                                        </button>
+                                    </td>
                                 </tr>
                             ))}
                         </tbody>
@@ -346,4 +411,18 @@ function FilterCard({ label, children, icon }) {
       <div className="text-slate-900 leading-none">{children}</div>
     </div>
   );
+}
+
+function StatCard({ label, value, icon }) {
+    return (
+      <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm flex items-center gap-5">
+        <div className="w-12 h-12 bg-slate-50 rounded-2xl flex items-center justify-center text-slate-600 border border-slate-100">
+          {icon}
+        </div>
+        <div>
+          <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.15em] mb-0.5">{label}</p>
+          <p className="text-2xl font-black text-slate-900 tracking-tighter">{value}</p>
+        </div>
+      </div>
+    );
 }
